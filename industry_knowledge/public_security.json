@@ -1,0 +1,70 @@
+{
+  "key": "public_security",
+  "name": "公安",
+  "aliases": ["公安", "警务", "涉案", "警情", "布控", "视频巡查", "重点人员"],
+  "terms": ["警情", "案件", "涉案车辆", "布控", "预警", "研判"],
+  "typical_projects": ["涉案车辆管理系统", "视频巡查平台", "警情研判平台", "重点人员管理平台"],
+  "target_users": "公安机关业务民警、研判人员和系统管理员",
+  "modules": [
+    {
+      "key": "alerts",
+      "name": "警情管理",
+      "description": "登记、查询和跟踪警情处置过程",
+      "pages": ["警情列表", "警情登记", "警情详情"],
+      "fields": ["警情编号", "警情类型", "发生地点", "报警时间", "处置状态"],
+      "table": "police_alerts",
+      "question": "是否需要警情登记和处置跟踪？",
+      "default": true
+    },
+    {
+      "key": "cases",
+      "name": "案件管理",
+      "description": "维护案件基本信息及办理状态",
+      "pages": ["案件列表", "案件登记", "案件详情"],
+      "fields": ["案件编号", "案件名称", "案发时间", "主办单位", "案件状态"],
+      "table": "police_cases",
+      "question": "是否需要案件管理？",
+      "default": true
+    },
+    {
+      "key": "vehicles",
+      "name": "车辆管理",
+      "description": "维护涉案车辆、车主和关联案件信息",
+      "pages": ["车辆列表", "车辆登记", "车辆详情"],
+      "fields": ["车牌号", "车辆品牌", "车辆颜色", "车主姓名", "关联案件"],
+      "table": "case_vehicles",
+      "question": "是否需要涉案车辆档案？",
+      "default": true
+    },
+    {
+      "key": "video_patrol",
+      "name": "视频巡查",
+      "description": "管理视频点位、巡查任务和发现记录",
+      "pages": ["视频点位", "巡查任务", "巡查记录"],
+      "fields": ["点位编号", "点位名称", "巡查时间", "巡查人员", "发现情况"],
+      "table": "video_patrol_records",
+      "question": "是否需要视频联动和巡查记录？",
+      "default": false
+    },
+    {
+      "key": "control",
+      "name": "布控预警",
+      "description": "配置车辆布控规则并跟踪预警处置",
+      "pages": ["布控列表", "布控新增", "预警记录"],
+      "fields": ["布控编号", "布控对象", "布控级别", "预警时间", "处置状态"],
+      "table": "control_warnings",
+      "question": "是否需要车辆布控和预警分析？",
+      "default": true
+    },
+    {
+      "key": "analysis",
+      "name": "统计研判",
+      "description": "按时间、区域和业务类型分析警务数据",
+      "pages": ["研判概览", "趋势分析", "区域分析"],
+      "fields": ["统计日期", "警情数量", "案件数量", "预警数量", "处置率"],
+      "table": "police_analysis_daily",
+      "question": "是否需要统计研判？",
+      "default": true
+    }
+  ]
+}

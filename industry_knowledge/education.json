@@ -1,0 +1,70 @@
+{
+  "key": "education",
+  "name": "教育",
+  "aliases": ["教育", "校园", "教学", "学生", "教师", "课程", "考试", "成绩"],
+  "terms": ["学生档案", "教师档案", "课程", "考试", "成绩"],
+  "typical_projects": ["智慧校园", "教学管理系统", "考试分析平台"],
+  "target_users": "学校教务人员、教师、学生和系统管理员",
+  "modules": [
+    {
+      "key": "students",
+      "name": "学生管理",
+      "description": "维护学生基本信息、班级和学籍状态",
+      "pages": ["学生列表", "学生登记", "学生详情"],
+      "fields": ["学号", "学生姓名", "班级", "入学日期", "学籍状态"],
+      "table": "education_students",
+      "question": "是否需要学生档案管理？",
+      "default": true
+    },
+    {
+      "key": "teachers",
+      "name": "教师管理",
+      "description": "维护教师档案、所属部门和任课信息",
+      "pages": ["教师列表", "教师登记", "任课信息"],
+      "fields": ["教师编号", "教师姓名", "所属部门", "职称", "在职状态"],
+      "table": "education_teachers",
+      "question": "是否需要教师档案管理？",
+      "default": true
+    },
+    {
+      "key": "courses",
+      "name": "课程管理",
+      "description": "维护课程信息、授课教师和开课计划",
+      "pages": ["课程列表", "课程维护", "开课计划"],
+      "fields": ["课程编号", "课程名称", "授课教师", "课程学分", "课程状态"],
+      "table": "education_courses",
+      "question": "是否需要课程管理？",
+      "default": true
+    },
+    {
+      "key": "exams",
+      "name": "考试管理",
+      "description": "安排考试计划并管理考场和考试状态",
+      "pages": ["考试计划", "考场安排", "考试详情"],
+      "fields": ["考试编号", "考试名称", "课程名称", "考试时间", "考试状态"],
+      "table": "education_exams",
+      "question": "是否需要考试管理？",
+      "default": true
+    },
+    {
+      "key": "scores",
+      "name": "成绩管理",
+      "description": "录入、查询和复核学生考试成绩",
+      "pages": ["成绩列表", "成绩录入", "成绩复核"],
+      "fields": ["学号", "课程名称", "考试名称", "成绩", "成绩状态"],
+      "table": "education_scores",
+      "question": "是否需要成绩管理？",
+      "default": true
+    },
+    {
+      "key": "analysis",
+      "name": "成绩分析",
+      "description": "分析班级、课程和学生成绩分布",
+      "pages": ["成绩概览", "班级分析", "课程分析"],
+      "fields": ["统计日期", "课程名称", "平均分", "及格率", "优秀率"],
+      "table": "score_analysis",
+      "question": "是否需要成绩统计分析？",
+      "default": true
+    }
+  ]
+}

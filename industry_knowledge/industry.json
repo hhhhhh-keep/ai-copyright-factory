@@ -1,0 +1,70 @@
+{
+  "key": "industry",
+  "name": "工业",
+  "aliases": ["工业", "设备", "巡检", "运维", "工单", "能耗", "生产"],
+  "terms": ["设备台账", "巡检计划", "运维工单", "告警", "能耗"],
+  "typical_projects": ["设备巡检系统", "工业运维平台", "设备监测平台"],
+  "target_users": "工业企业设备管理员、运维人员和生产管理人员",
+  "modules": [
+    {
+      "key": "equipment",
+      "name": "设备管理",
+      "description": "维护设备台账、分类和运行状态",
+      "pages": ["设备列表", "设备登记", "设备详情"],
+      "fields": ["设备编号", "设备名称", "设备类型", "安装位置", "运行状态"],
+      "table": "industrial_equipment",
+      "question": "是否需要设备台账管理？",
+      "default": true
+    },
+    {
+      "key": "work_orders",
+      "name": "工单管理",
+      "description": "创建、派发和跟踪设备运维工单",
+      "pages": ["工单列表", "工单创建", "工单处理"],
+      "fields": ["工单编号", "设备编号", "故障描述", "处理人员", "工单状态"],
+      "table": "maintenance_work_orders",
+      "question": "是否需要运维工单管理？",
+      "default": true
+    },
+    {
+      "key": "alarms",
+      "name": "告警管理",
+      "description": "汇总设备告警并记录确认和处置结果",
+      "pages": ["告警列表", "告警详情", "告警规则"],
+      "fields": ["告警编号", "设备编号", "告警级别", "告警时间", "处理状态"],
+      "table": "equipment_alarms",
+      "question": "是否需要设备告警管理？",
+      "default": true
+    },
+    {
+      "key": "inspections",
+      "name": "巡检管理",
+      "description": "制定巡检计划并记录巡检结果",
+      "pages": ["巡检计划", "巡检任务", "巡检记录"],
+      "fields": ["任务编号", "设备编号", "巡检人员", "巡检时间", "巡检结果"],
+      "table": "equipment_inspections",
+      "question": "是否需要设备巡检？",
+      "default": true
+    },
+    {
+      "key": "monitoring",
+      "name": "设备监测",
+      "description": "展示设备实时指标和历史监测数据",
+      "pages": ["实时监测", "历史曲线"],
+      "fields": ["设备编号", "采集时间", "温度", "压力", "运行时长"],
+      "table": "equipment_metrics",
+      "question": "是否需要设备运行监测？",
+      "default": false
+    },
+    {
+      "key": "energy",
+      "name": "能耗分析",
+      "description": "统计设备和区域能耗并分析变化趋势",
+      "pages": ["能耗概览", "能耗趋势", "能耗排行"],
+      "fields": ["统计日期", "设备编号", "用电量", "用水量", "综合能耗"],
+      "table": "energy_statistics",
+      "question": "是否需要能耗分析？",
+      "default": true
+    }
+  ]
+}

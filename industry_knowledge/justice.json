@@ -1,0 +1,70 @@
+{
+  "key": "justice",
+  "name": "政法",
+  "aliases": ["政法", "法院", "检察", "司法", "卷宗", "法律文书", "案件流转", "证据"],
+  "terms": ["电子卷宗", "法律文书", "案件审批", "证据", "流程节点"],
+  "typical_projects": ["电子卷宗系统", "法律文书管理系统", "案件流转系统"],
+  "target_users": "政法机关案件承办人员、审批人员和档案管理员",
+  "modules": [
+    {
+      "key": "dossiers",
+      "name": "卷宗管理",
+      "description": "建立电子卷宗目录并管理卷宗材料",
+      "pages": ["卷宗列表", "卷宗编目", "卷宗详情"],
+      "fields": ["卷宗编号", "案件编号", "卷宗名称", "材料数量", "归档状态"],
+      "table": "case_dossiers",
+      "question": "是否需要电子卷宗管理？",
+      "default": true
+    },
+    {
+      "key": "documents",
+      "name": "法律文书",
+      "description": "管理法律文书模板、制作和归档",
+      "pages": ["文书列表", "文书制作", "文书详情"],
+      "fields": ["文书编号", "文书类型", "案件编号", "制作人员", "文书状态"],
+      "table": "legal_documents",
+      "question": "是否需要法律文书管理？",
+      "default": true
+    },
+    {
+      "key": "case_flow",
+      "name": "案件流转",
+      "description": "记录案件在各业务节点之间的流转过程",
+      "pages": ["待办案件", "流转记录", "流程跟踪"],
+      "fields": ["案件编号", "当前节点", "承办人员", "流转时间", "办理期限"],
+      "table": "case_flow_records",
+      "question": "是否需要案件流转跟踪？",
+      "default": true
+    },
+    {
+      "key": "approvals",
+      "name": "案件审批",
+      "description": "处理案件审批申请和审批意见",
+      "pages": ["待审批列表", "审批处理", "审批记录"],
+      "fields": ["审批编号", "案件编号", "申请人员", "审批人员", "审批结果"],
+      "table": "case_approvals",
+      "question": "是否需要案件审批？",
+      "default": true
+    },
+    {
+      "key": "evidence",
+      "name": "证据管理",
+      "description": "登记证据信息并维护证据流转记录",
+      "pages": ["证据列表", "证据登记", "证据流转"],
+      "fields": ["证据编号", "证据名称", "证据类型", "保管位置", "证据状态"],
+      "table": "case_evidence",
+      "question": "是否需要证据管理？",
+      "default": false
+    },
+    {
+      "key": "statistics",
+      "name": "办案统计",
+      "description": "统计案件办理数量、期限和完成情况",
+      "pages": ["办案概览", "期限分析"],
+      "fields": ["统计日期", "案件总数", "办结数量", "逾期数量", "办结率"],
+      "table": "justice_statistics",
+      "question": "是否需要办案统计分析？",
+      "default": true
+    }
+  ]
+}
