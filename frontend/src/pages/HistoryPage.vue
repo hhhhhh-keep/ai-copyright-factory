@@ -13,6 +13,10 @@ const statusText = {
   draft_planning: '待确认规划',
   confirmed: '规划已确认',
   generating: '生成中',
+  regenerating_project: '重新生成中',
+  awaiting_demo_review: '等待 Demo 审查',
+  revision_review: '等待确认修改',
+  generating_materials: '生成材料中',
   success: '生成成功',
   failed: '生成失败'
 }
@@ -83,6 +87,23 @@ async function startDemo(job) {
   }
 }
 
+async function deleteJob(job) {
+  const confirmed = window.confirm(
+    `确认删除“${job.software_name}”吗？\n任务编号：${job.job_id}\n源码、日志、截图、文档和材料包将同时删除，且无法恢复。`
+  )
+  if (!confirmed) return
+  actionJob.value = job.job_id
+  error.value = ''
+  try {
+    await request(`${API}/api/jobs/${job.job_id}`, { method: 'DELETE' })
+    jobs.value = jobs.value.filter(item => item.job_id !== job.job_id)
+  } catch (exception) {
+    error.value = `删除任务失败：${exception.message}`
+  } finally {
+    actionJob.value = ''
+  }
+}
+
 onMounted(loadJobs)
 </script>
 
@@ -122,6 +143,7 @@ onMounted(loadJobs)
             >{{actionJob === job.job_id ? '启动中…' : (job.run_status === 'failed' ? '重新启动 Demo' : '启动 Demo')}}</button>
             <a v-if="job.run_status === 'running'" :href="job.swagger_url" target="_blank">Swagger</a>
             <a v-if="job.has_package" :href="`${API}/api/jobs/${job.job_id}/download`">下载材料</a>
+            <button class="danger" :disabled="actionJob === job.job_id" @click="deleteJob(job)">删除</button>
           </div>
         </article>
       </div>

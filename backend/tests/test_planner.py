@@ -5,7 +5,7 @@ import unittest
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from unittest.mock import patch
 
-from app.planner import Planning, build_planning
+from app.planner import Planning, build_planning, propose_revision
 
 
 VALID_PLANNING = {
@@ -124,13 +124,20 @@ class PlannerTests(unittest.TestCase):
         self.assertEqual(result.model, "test-model")
         self.assertEqual(result.planning.modules[0].key, "students")
 
-    def test_llm_mode_rejects_module_outside_knowledge_base(self):
-        invalid = {**VALID_PLANNING, "modules": [*VALID_PLANNING["modules"]]}
-        invalid["modules"][0] = {
-            **invalid["modules"][0],
-            "key": "visitors",
+    def test_llm_mode_accepts_industry_aligned_custom_module(self):
+        custom = {**VALID_PLANNING, "modules": [*VALID_PLANNING["modules"]]}
+        custom["modules"][0] = {
+            **custom["modules"][0],
+            "key": "classroom_patrol",
+            "name": "课堂巡课",
+            "description": "面向教师和课程开展课堂教学巡查",
         }
-        with patch("app.planner._extract_json", return_value=invalid):
+        custom["database_tables"] = [
+            "education_classroom_patrol",
+            "education_teachers",
+            "education_courses",
+        ]
+        with patch("app.planner._extract_json", return_value=custom):
             with patch("app.planner.urllib.request.urlopen") as request:
                 response = request.return_value.__enter__.return_value
                 response.read.return_value = json.dumps(
@@ -144,8 +151,37 @@ class PlannerTests(unittest.TestCase):
                     },
                     clear=False,
                 ):
-                    with self.assertRaises(ValueError):
-                        build_planning({**self.job, "planner_mode": "llm"})
+                    result = build_planning({**self.job, "planner_mode": "llm"})
+        self.assertEqual(result.planning.modules[0].key, "classroom_patrol")
+
+    def test_template_mode_generates_ui_plan_and_multiple_page_patterns(self):
+        result = build_planning({**self.job, "planner_mode": "template"})
+        self.assertIn(
+            result.planning.ui_plan.shell,
+            {"sidebar_admin", "top_workspace", "split_console"},
+        )
+        self.assertGreaterEqual(
+            len({module.page_pattern for module in result.planning.modules}),
+            2,
+        )
+
+    def test_revision_rules_can_add_module_and_change_shell(self):
+        current = build_planning(
+            {**self.job, "planner_mode": "template"}
+        ).planning.model_dump()
+        with patch.dict(
+            os.environ,
+            {"AI_PLANNER_API_KEY": "", "AI_PLANNER_MODEL": ""},
+            clear=False,
+        ):
+            result = propose_revision(
+                self.job,
+                current,
+                "增加课堂巡课模块，整体改为顶部导航",
+            )
+        self.assertEqual(result.actual_mode, "rules")
+        self.assertEqual(result.planning.ui_plan.shell, "top_workspace")
+        self.assertIn("课堂巡课", [item.name for item in result.planning.modules])
 
 
 if __name__ == "__main__":

@@ -98,8 +98,8 @@ def planning_context(job: Dict[str, Any]) -> Dict[str, Any]:
         job.get("description", ""),
         job.get("industry_type"),
     )
-    answers = job.get("clarification_answers") or {}
-    modules = selected_modules(industry, answers)
+    answers = job.get("clarification_answers")
+    modules = selected_modules(industry, answers) if answers else industry["modules"]
     return {
         "industry": industry,
         "modules": modules,

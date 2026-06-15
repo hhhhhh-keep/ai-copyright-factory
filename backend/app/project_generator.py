@@ -1223,6 +1223,24 @@ def _vue_page(module: Dict[str, Any]) -> str:
         ],
         ensure_ascii=False,
     )
+    pattern = module.get("page_pattern", "table_crud")
+    pattern_content = {
+        "master_detail": """
+      <div class="master-detail-preview"><div><b>业务对象</b><p v-for="row in rows.slice(0,4)" :key="row.id">#{{row.id}} · {{row[fields[0]?.key]}}</p></div><aside><b>详情摘要</b><p>选择左侧记录查看完整业务信息和办理状态。</p></aside></div>
+""",
+        "tree_detail": """
+      <div class="tree-detail-preview"><nav><b>分类目录</b><p>全部数据</p><p>待处理</p><p>已完成</p></nav><div><b>目录内容</b><p>按业务目录组织数据，并在右侧维护详细信息。</p></div></div>
+""",
+        "workflow_timeline": """
+      <div class="workflow-preview"><b>业务办理流程</b><div><span>1</span>登记受理<i></i><span>2</span>审核办理<i></i><span>3</span>办结归档</div></div>
+""",
+        "kanban": """
+      <div class="kanban-preview"><article v-for="status in ['待处理','处理中','已完成']" :key="status"><b>{{status}}</b><p v-for="index in 2" :key="index">{{status}}任务 {{index}}</p></article></div>
+""",
+        "dashboard": """
+      <div class="module-dashboard"><article v-for="(field,index) in fields.slice(0,4)" :key="field.key"><span>{{field.label}}</span><b>{{128 + index * 36}}</b></article><div class="mini-trend"><i v-for="height in [38,62,48,76,58,88]" :style="{height:height+'%'}"></i></div></div>
+""",
+    }.get(pattern, "")
     return f"""
 <script setup>
 import {{ onMounted, reactive, ref }} from 'vue'
@@ -1288,12 +1306,13 @@ onMounted(load)
 </script>
 
 <template>
-  <section class="module-page" data-module-key="{key}">
+  <section class="module-page pattern-{pattern}" data-module-key="{key}">
     <div class="page-heading">
       <div><h2>{module["name"]}</h2><p>{module["description"]}</p></div>
       <el-button type="primary" data-action="create" @click="openCreate">新增记录</el-button>
     </div>
     <el-card shadow="never">
+{pattern_content}
       <div class="filters">
         <el-input v-model="query.keyword" placeholder="输入关键词查询" clearable @keyup.enter="load" />
         <el-button type="primary" @click="load">查询</el-button>
@@ -1465,18 +1484,7 @@ export default request
         _write(frontend / f"src/views/{pascal}Page.vue", _vue_page(module))
     _write(
         frontend / "src/views/DashboardPage.vue",
-        f"""
-<script setup>
-const modules = {json.dumps(menu, ensure_ascii=False)}
-</script>
-<template>
-  <section class="dashboard">
-    <div class="hero"><div><p>系统运行概览</p><h1>{planning["software_name"]}</h1><span>Spring Boot 3 + Vue 3 业务管理平台</span></div><b>{{{{modules.length}}}}<small>业务模块</small></b></div>
-    <div class="metric-grid"><el-card v-for="(item,index) in modules" :key="item.key" shadow="hover"><span>{{{{item.name}}}}</span><strong>{{{{128 + index * 37}}}}</strong><small>数据状态正常</small></el-card></div>
-    <el-card shadow="never"><h3>近七日业务趋势</h3><div class="bars"><i v-for="height in [42,58,51,76,68,86,73]" :style="{{height:height+'%'}}"></i></div></el-card>
-  </section>
-</template>
-""",
+        _dashboard_vue(planning, menu),
     )
     _write(
         frontend / "src/router.js",
@@ -1493,7 +1501,69 @@ export default createRouter({{history: createWebHistory(), routes}})
     )
     _write(
         frontend / "src/App.vue",
-        f"""
+        _app_vue(planning, menu),
+    )
+    _write(
+        frontend / "src/style.css",
+        _frontend_style(planning),
+    )
+    _write(
+        root / "THIRD_PARTY_NOTICES.md",
+        """# Third-Party Notices
+
+Generated projects use the following runtime dependencies:
+
+- Vue.js (MIT License)
+- Vue Router (MIT License)
+- Element Plus (MIT License)
+- Axios (MIT License)
+- Vite (MIT License)
+
+The generated application templates, business structure, sample data and styling are
+produced by AI Copyright Factory and do not copy third-party demo branding or pages.
+""",
+    )
+
+
+def _dashboard_vue(planning: Dict[str, Any], menu: List[Dict[str, str]]) -> str:
+    pattern = planning.get("ui_plan", {}).get("home_pattern", "metric_dashboard")
+    if pattern == "task_dashboard":
+        body = """
+    <div class="task-workbench">
+      <el-card><h3>我的待办</h3><p v-for="(item,index) in modules.slice(0,4)" :key="item.key"><b>{{index + 1}}</b>{{item.name}}待处理事项 <span>{{8 + index * 3}}</span></p></el-card>
+      <el-card><h3>业务流程</h3><div class="flow-line"><i>受理</i><em></em><i>办理</i><em></em><i>审核</i><em></em><i>归档</i></div></el-card>
+      <el-card><h3>快捷入口</h3><div class="quick-grid"><router-link v-for="item in modules" :key="item.key" :to="'/'+item.key">{{item.name}}</router-link></div></el-card>
+    </div>
+"""
+    elif pattern == "analysis_dashboard":
+        body = """
+    <div class="analysis-workbench">
+      <div class="analysis-metrics"><article v-for="(item,index) in modules.slice(0,4)" :key="item.key"><span>{{item.name}}</span><b>{{356 + index * 89}}</b><small>较上期 +{{4 + index}}%</small></article></div>
+      <el-card class="trend-panel"><h3>核心指标趋势</h3><div class="bars"><i v-for="height in [32,48,42,68,61,82,74,91]" :style="{height:height+'%'}"></i></div></el-card>
+      <el-card class="ranking-panel"><h3>业务排行</h3><p v-for="(item,index) in modules" :key="item.key"><span>{{index + 1}}. {{item.name}}</span><b>{{98 - index * 7}}%</b></p></el-card>
+    </div>
+"""
+    else:
+        body = """
+    <div class="metric-grid"><el-card v-for="(item,index) in modules" :key="item.key" shadow="hover"><span>{{item.name}}</span><strong>{{128 + index * 37}}</strong><small>数据状态正常</small></el-card></div>
+    <el-card shadow="never"><h3>近七日业务趋势</h3><div class="bars"><i v-for="height in [42,58,51,76,68,86,73]" :style="{height:height+'%'}"></i></div></el-card>
+"""
+    return f"""
+<script setup>
+const modules = {json.dumps(menu, ensure_ascii=False)}
+</script>
+<template>
+  <section class="dashboard dashboard-{pattern}">
+    <div class="hero"><div><p>系统运行概览</p><h1>{planning["software_name"]}</h1><span>Spring Boot 3 + Vue 3 业务管理平台</span></div><b>{{{{modules.length}}}}<small>业务模块</small></b></div>
+{body}
+  </section>
+</template>
+"""
+
+
+def _app_vue(planning: Dict[str, Any], menu: List[Dict[str, str]]) -> str:
+    shell = planning.get("ui_plan", {}).get("shell", "sidebar_admin")
+    common = f"""
 <script setup>
 import {{ ref }} from 'vue'
 const loggedIn = ref(false)
@@ -1504,19 +1574,48 @@ const modules = {json.dumps(menu, ensure_ascii=False)}
     <div class="login-brand"><h1>{planning["software_name"]}</h1><p>{planning["industry_name"]}行业数字化管理平台</p></div>
     <el-card class="login-card" shadow="always"><h2>欢迎登录</h2><p>请输入管理员账号进入系统</p><el-input model-value="admin" /><el-input type="password" model-value="123456" show-password /><el-button type="primary" @click="loggedIn=true">登录系统</el-button><small>演示账号：admin / 123456</small></el-card>
   </div>
-  <el-container v-else class="shell">
+"""
+    if shell == "top_workspace":
+        layout = f"""
+  <div v-else class="shell shell-top">
+    <header><div><b>{planning["software_name"]}</b><small>业务协同工作台</small></div><nav><router-link to="/">工作台</router-link><router-link v-for="item in modules" :key="item.key" :to="'/'+item.key" :data-module-key="item.key">{{{{item.name}}}}</router-link></nav><span>管理员</span></header>
+    <main><router-view /></main>
+  </div>
+"""
+    elif shell == "split_console":
+        layout = f"""
+  <div v-else class="shell shell-split">
+    <aside><h2>{planning["software_name"]}</h2><p>业务对象</p><router-link to="/">综合态势</router-link><router-link v-for="item in modules" :key="item.key" :to="'/'+item.key" :data-module-key="item.key">{{{{item.name}}}}</router-link></aside>
+    <main><header><b>业务控制台</b><span>实时运行中</span></header><router-view /></main>
+    <section class="context-panel"><b>快捷信息</b><p>待处理事项 12</p><p>今日新增 28</p><p>运行告警 3</p></section>
+  </div>
+"""
+    else:
+        layout = f"""
+  <el-container v-else class="shell shell-side">
     <el-aside width="240px"><h2>{planning["software_name"]}</h2><p>智慧业务管理中心</p><el-menu router default-active="/"><el-menu-item index="/">运营首页</el-menu-item><el-menu-item v-for="item in modules" :key="item.key" :index="'/'+item.key" :data-module-key="item.key">{{{{item.name}}}}</el-menu-item></el-menu></el-aside>
     <el-container><el-header><b>{planning["software_name"]}</b><span>管理员</span></el-header><el-main><router-view /></el-main></el-container>
   </el-container>
+"""
+    return common + layout + """
 </template>
-""",
-    )
-    _write(
-        frontend / "src/style.css",
-        """
+"""
+
+
+def _frontend_style(planning: Dict[str, Any]) -> str:
+    density = planning.get("ui_plan", {}).get("density", "standard")
+    padding = {"compact": "16px", "comfortable": "32px"}.get(density, "24px")
+    base = """
 *{box-sizing:border-box}body{margin:0;font-family:"Microsoft YaHei",Arial;color:#203044;background:#f4f7fb}.login-page{min-height:100vh;display:flex;align-items:center;justify-content:center;gap:120px;background:linear-gradient(125deg,#0c356d,#1689c8);color:#fff}.login-brand h1{font-size:38px;margin:0 0 12px}.login-brand p{opacity:.75;letter-spacing:3px}.login-card{width:390px;padding:22px;color:#26384d}.login-card .el-input{margin:10px 0}.login-card .el-button{width:100%;margin:16px 0}.login-card small{color:#8391a3}.shell{min-height:100vh}.el-aside{background:linear-gradient(180deg,#123d76,#09264d);color:#fff;padding:24px 14px}.el-aside h2{font-size:20px;margin:0 8px 4px}.el-aside>p{font-size:12px;opacity:.6;margin:0 8px 22px}.el-aside .el-menu{border:0;background:transparent}.el-aside .el-menu-item{color:#cbd8e8;border-radius:7px;margin:4px 0}.el-aside .el-menu-item:hover,.el-aside .el-menu-item.is-active{color:#fff;background:#1d5b9f}.el-header{display:flex;align-items:center;justify-content:space-between;background:#fff;border-bottom:1px solid #e5ebf2}.el-header span{background:#edf5ff;color:#2466ad;padding:8px 14px;border-radius:18px}.el-main{padding:24px 28px}.page-heading{display:flex;justify-content:space-between;align-items:center;margin-bottom:16px}.page-heading h2{margin:0}.page-heading p{margin:8px 0 0;color:#7c8a9c}.filters{display:flex;gap:10px;margin-bottom:18px}.filters .el-input{width:300px}.el-pagination{justify-content:flex-end;margin-top:18px}.hero{display:flex;justify-content:space-between;align-items:center;padding:28px 34px;border-radius:12px;background:linear-gradient(120deg,#176bc4,#28a2d8);color:#fff}.hero h1{margin:8px 0}.hero b{font-size:38px;text-align:center}.hero small{display:block;font-size:13px}.metric-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:16px;margin:18px 0}.metric-grid span,.metric-grid small{display:block;color:#7c8a9c}.metric-grid strong{display:block;font-size:28px;margin:12px 0}.bars{height:220px;display:flex;align-items:flex-end;gap:32px;padding:28px 45px 0;border-bottom:1px solid #dfe6ef}.bars i{flex:1;background:linear-gradient(#55adeb,#1970c4);border-radius:6px 6px 0 0}
-""",
-    )
+.shell-top>header{height:76px;padding:0 30px;background:#fff;display:grid;grid-template-columns:260px 1fr 100px;align-items:center;border-bottom:1px solid #e2e8f0}.shell-top>header div{display:grid}.shell-top>header small{color:#8795a7}.shell-top nav{display:flex;gap:8px;overflow:auto}.shell-top nav a,.shell-split a{color:#40546b;text-decoration:none;padding:10px 13px;border-radius:7px}.shell-top nav a.router-link-active{background:#e8f2ff;color:#1769bd}
+"""
+    variants = f"""
+.shell-top>main{{padding:{padding}}}.shell-split{{display:grid;grid-template-columns:220px 1fr 220px;background:#eef3f8}}.shell-split>aside{{background:#132f50;color:#fff;padding:{padding};display:flex;flex-direction:column;gap:7px}}.shell-split>aside a{{color:#cbd8e7}}.shell-split>aside a.router-link-active{{background:#245b8f;color:#fff}}.shell-split>main>header{{height:64px;background:#fff;display:flex;justify-content:space-between;align-items:center;padding:0 {padding}}}.shell-split>main>.module-page,.shell-split>main>.dashboard{{padding:{padding}}}.context-panel{{background:#fff;padding:{padding};border-left:1px solid #dde5ee}}.context-panel p{{padding:12px;background:#f3f7fb;border-radius:7px}}
+.master-detail-preview,.tree-detail-preview{{display:grid;grid-template-columns:1fr 1.6fr;gap:12px;margin-bottom:18px}}.master-detail-preview>div,.master-detail-preview aside,.tree-detail-preview>*{{padding:16px;background:#f5f8fc;border:1px solid #e0e7ef;border-radius:8px}}.workflow-preview{{padding:18px;background:#f7f9fc;border-radius:8px;margin-bottom:18px}}.workflow-preview>div{{display:flex;align-items:center;margin-top:14px}}.workflow-preview span{{width:30px;height:30px;border-radius:50%;background:#2678c9;color:#fff;display:grid;place-items:center}}.workflow-preview i{{height:2px;background:#9fc5e8;flex:1}}.kanban-preview{{display:grid;grid-template-columns:repeat(3,1fr);gap:12px;margin-bottom:18px}}.kanban-preview article{{background:#eef3f8;padding:14px;border-radius:8px}}.kanban-preview p{{background:#fff;padding:10px;border-radius:6px}}.module-dashboard{{display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin-bottom:18px}}.module-dashboard article{{padding:16px;background:#f3f8fe;border-radius:8px}}.module-dashboard article span,.module-dashboard article b{{display:block}}.module-dashboard article b{{font-size:24px;margin-top:8px}}.mini-trend{{grid-column:1/-1;height:120px;display:flex;align-items:flex-end;gap:18px;padding:18px;background:#f8fafc}}.mini-trend i{{flex:1;background:#2d82cf;border-radius:4px 4px 0 0}}
+.task-workbench{{display:grid;grid-template-columns:1fr 1.4fr;gap:16px;margin-top:18px}}.task-workbench>.el-card:last-child{{grid-column:1/-1}}.task-workbench p{{display:grid;grid-template-columns:30px 1fr auto;align-items:center;padding:10px;border-bottom:1px solid #edf1f5}}.task-workbench p b{{width:24px;height:24px;display:grid;place-items:center;background:#e8f2ff;color:#2872b8;border-radius:50%}}.flow-line{{display:flex;align-items:center;padding:40px 20px}}.flow-line i{{font-style:normal;background:#2678c9;color:#fff;padding:12px;border-radius:50%}}.flow-line em{{height:2px;background:#9fc5e8;flex:1}}.quick-grid{{display:grid;grid-template-columns:repeat(4,1fr);gap:10px}}.quick-grid a{{padding:16px;background:#f0f6fc;color:#2469aa;text-decoration:none;border-radius:8px}}.analysis-workbench{{display:grid;grid-template-columns:2fr 1fr;gap:16px;margin-top:18px}}.analysis-metrics{{grid-column:1/-1;display:grid;grid-template-columns:repeat(4,1fr);gap:12px}}.analysis-metrics article{{padding:18px;background:#152f52;color:#fff;border-radius:9px}}.analysis-metrics span,.analysis-metrics small,.analysis-metrics b{{display:block}}.analysis-metrics b{{font-size:28px;margin:10px 0}}.ranking-panel p{{display:flex;justify-content:space-between;padding:10px 0;border-bottom:1px solid #edf1f5}}
+@media(max-width:1000px){{.shell-split{{grid-template-columns:190px 1fr}}.context-panel{{display:none}}.shell-top>header{{grid-template-columns:1fr auto}}.shell-top nav{{grid-row:2;grid-column:1/-1}}.module-dashboard{{grid-template-columns:1fr 1fr}}}}
+"""
+    return base + variants
 
 
 def generate_java_project(job_dir: Path) -> None:

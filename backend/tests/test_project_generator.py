@@ -11,6 +11,12 @@ class ProjectGeneratorTests(unittest.TestCase):
         planning = {
             "software_name": "涉案车辆管理系统",
             "industry_name": "公安",
+            "ui_plan": {
+                "shell": "top_workspace",
+                "home_pattern": "analysis_dashboard",
+                "navigation": "top",
+                "density": "comfortable",
+            },
             "modules": [
                 {
                     "key": "vehicles",
@@ -18,6 +24,7 @@ class ProjectGeneratorTests(unittest.TestCase):
                     "description": "维护涉案车辆信息",
                     "pages": ["车辆列表", "车辆登记"],
                     "fields": ["车牌号", "车辆品牌", "登记时间"],
+                    "page_pattern": "master_detail",
                 },
                 {
                     "key": "cases",
@@ -25,6 +32,7 @@ class ProjectGeneratorTests(unittest.TestCase):
                     "description": "维护案件信息",
                     "pages": ["案件列表", "案件登记"],
                     "fields": ["案件编号", "案件名称", "案件状态"],
+                    "page_pattern": "workflow_timeline",
                 },
                 {
                     "key": "analysis",
@@ -32,6 +40,7 @@ class ProjectGeneratorTests(unittest.TestCase):
                     "description": "统计业务数据",
                     "pages": ["研判概览"],
                     "fields": ["统计日期", "案件数量", "处置率"],
+                    "page_pattern": "dashboard",
                 },
             ],
             "database_tables": [
@@ -67,6 +76,17 @@ class ProjectGeneratorTests(unittest.TestCase):
             pom = (root / "backend/pom.xml").read_text(encoding="utf-8")
             self.assertIn("mybatis-plus-spring-boot3-starter", pom)
             self.assertIn("mysql-connector-j", pom)
+            app_vue = (root / "frontend/src/App.vue").read_text(encoding="utf-8")
+            self.assertIn("shell-top", app_vue)
+            dashboard = (
+                root / "frontend/src/views/DashboardPage.vue"
+            ).read_text(encoding="utf-8")
+            self.assertIn("analysis-workbench", dashboard)
+            vehicle_page = (
+                root / "frontend/src/views/VehiclesPage.vue"
+            ).read_text(encoding="utf-8")
+            self.assertIn("master-detail-preview", vehicle_page)
+            self.assertTrue((root / "THIRD_PARTY_NOTICES.md").exists())
 
 
 if __name__ == "__main__":

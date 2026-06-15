@@ -1,18 +1,40 @@
 import json
+import hashlib
 import os
 import re
+from copy import deepcopy
 import urllib.error
 import urllib.request
 from pathlib import Path
 from typing import Any, Dict, List, Literal, Optional, Tuple
 
 from dotenv import load_dotenv
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 
 from .industry_knowledge import planning_context
 
 
 load_dotenv(Path(__file__).resolve().parents[1] / ".env")
+
+
+PagePattern = Literal[
+    "table_crud",
+    "master_detail",
+    "tree_detail",
+    "workflow_timeline",
+    "kanban",
+    "dashboard",
+]
+ShellPattern = Literal["sidebar_admin", "top_workspace", "split_console"]
+
+
+class UIPlan(BaseModel):
+    shell: ShellPattern = "sidebar_admin"
+    home_pattern: Literal["metric_dashboard", "task_dashboard", "analysis_dashboard"] = (
+        "metric_dashboard"
+    )
+    navigation: Literal["side", "top", "split"] = "side"
+    density: Literal["compact", "standard", "comfortable"] = "standard"
 
 
 class ModulePlan(BaseModel):
@@ -21,6 +43,9 @@ class ModulePlan(BaseModel):
     description: str = Field(default="", max_length=300)
     pages: List[str] = Field(min_length=1, max_length=8)
     fields: List[str] = Field(min_length=2, max_length=12)
+    page_pattern: PagePattern = "table_crud"
+    detail_pattern: PagePattern = "master_detail"
+    edit_pattern: Literal["dialog", "drawer", "form_wizard"] = "dialog"
 
     @field_validator("pages", "fields")
     @classmethod
@@ -36,6 +61,7 @@ class Planning(BaseModel):
     industry_type: str = Field(default="", max_length=40)
     industry_name: str = Field(default="", max_length=30)
     target_users: str = Field(default="系统业务管理人员", min_length=2, max_length=200)
+    ui_plan: UIPlan = Field(default_factory=UIPlan)
     modules: List[ModulePlan] = Field(min_length=3, max_length=8)
     database_tables: List[str] = Field(min_length=1, max_length=12)
     api_list: List[str] = Field(min_length=1, max_length=30)
@@ -61,11 +87,25 @@ class Planning(BaseModel):
             raise ValueError("模块 key 必须唯一")
         return value
 
+    @model_validator(mode="after")
+    def tables_match_modules(self) -> "Planning":
+        if len(self.database_tables) != len(self.modules):
+            raise ValueError("每个功能模块必须对应一个数据库表")
+        return self
+
 
 class PlannerResult(BaseModel):
     planning: Planning
     requested_mode: Literal["template", "llm", "auto"]
     actual_mode: Literal["template", "llm"]
+    model: Optional[str] = None
+    fallback_reason: Optional[str] = None
+
+
+class RevisionResult(BaseModel):
+    planning: Planning
+    summary: str
+    actual_mode: Literal["llm", "rules"]
     model: Optional[str] = None
     fallback_reason: Optional[str] = None
 
@@ -118,13 +158,17 @@ def template_planning(job: Dict[str, Any]) -> Planning:
             "industry_type": industry["key"],
             "industry_name": industry["name"],
             "target_users": industry["target_users"],
+            "ui_plan": _ui_plan_for(job, modules),
             "modules": [
                 {
-                    key: value
-                    for key, value in module.items()
-                    if key in {"key", "name", "description", "pages", "fields"}
+                    **{
+                        key: value
+                        for key, value in module.items()
+                        if key in {"key", "name", "description", "pages", "fields"}
+                    },
+                    **_module_ui(module, index),
                 }
-                for module in modules
+                for index, module in enumerate(modules)
             ],
             "database_tables": [module["table"] for module in modules],
             "api_list": [
@@ -157,6 +201,12 @@ def _schema_example() -> Dict[str, Any]:
         "description": "系统用途和业务范围说明",
         "software_type": "管理系统",
         "target_users": "业务管理人员",
+        "ui_plan": {
+            "shell": "top_workspace",
+            "home_pattern": "task_dashboard",
+            "navigation": "top",
+            "density": "standard",
+        },
         "modules": [
             {
                 "key": "items",
@@ -164,6 +214,9 @@ def _schema_example() -> Dict[str, Any]:
                 "description": "维护核心业务信息",
                 "pages": ["信息列表", "信息新增"],
                 "fields": ["名称", "分类", "状态", "更新时间"],
+                "page_pattern": "master_detail",
+                "detail_pattern": "workflow_timeline",
+                "edit_pattern": "drawer",
             },
             {
                 "key": "records",
@@ -171,6 +224,9 @@ def _schema_example() -> Dict[str, Any]:
                 "description": "查询和管理业务操作记录",
                 "pages": ["记录列表", "记录详情"],
                 "fields": ["记录编号", "操作人", "操作时间", "结果"],
+                "page_pattern": "workflow_timeline",
+                "detail_pattern": "master_detail",
+                "edit_pattern": "form_wizard",
             },
             {
                 "key": "reports",
@@ -178,6 +234,9 @@ def _schema_example() -> Dict[str, Any]:
                 "description": "展示核心业务指标和趋势",
                 "pages": ["数据概览", "趋势统计"],
                 "fields": ["统计日期", "业务数量", "完成率", "同比变化"],
+                "page_pattern": "dashboard",
+                "detail_pattern": "master_detail",
+                "edit_pattern": "dialog",
             },
         ],
         "database_tables": ["items", "records"],
@@ -192,11 +251,14 @@ def _messages(job: Dict[str, Any], context: Dict[str, Any]) -> List[Dict[str, st
     modules = context["modules"]
     system = (
         "你是软件产品规划器。只输出一个合法 JSON 对象，不要 Markdown、解释或代码围栏。"
-        "规划必须严格基于提供的行业知识库，不得增加知识库之外的模块、页面、字段或数据表。"
+        "规划必须先参考提供的行业知识库，并结合软件名称、类型和描述选择最相关模块。"
+        "允许对知识库模块做面向当前软件的合理命名和组合，但不得生成与行业无关的功能。"
         "modules 数量为 3 到 8；每个模块 key 使用小写英文 snake_case 且唯一；"
         "每个模块包含 1 到 8 个 pages、2 到 12 个 fields。"
         "每个模块必须提供 description；必须提供 target_users。"
         "screenshots 只能引用登录页、首页或 modules 中存在的模块。"
+        "必须生成 ui_plan；每个模块必须选择 page_pattern、detail_pattern 和 edit_pattern。"
+        "同一规划至少使用两种 page_pattern，不能把全部模块都生成为 table_crud。"
     )
     user = (
         "请为以下软件生成结构化规划。\n"
@@ -283,8 +345,71 @@ def _request_llm(job: Dict[str, Any]) -> Tuple[Planning, str]:
     planning.software_type = job.get("software_type") or planning.software_type
     planning.industry_type = context["industry"]["key"]
     planning.industry_name = context["industry"]["name"]
-    validate_planning_against_context(planning, context, require_all_modules=True)
+    _validate_llm_industry_alignment(planning, context)
     return planning, model
+
+
+def _module_ui(module: Dict[str, Any], index: int) -> Dict[str, str]:
+    text = f"{module.get('name', '')}{module.get('description', '')}"
+    if any(word in text for word in ("统计", "分析", "研判", "监测")):
+        pattern = "dashboard"
+    elif any(word in text for word in ("案件", "审批", "流转", "工单")):
+        pattern = "workflow_timeline"
+    elif any(word in text for word in ("档案", "卷宗", "组织", "设备")):
+        pattern = "tree_detail"
+    elif any(word in text for word in ("告警", "预警", "巡查")):
+        pattern = "kanban"
+    else:
+        pattern = "master_detail" if index % 2 else "table_crud"
+    return {
+        "page_pattern": pattern,
+        "detail_pattern": "workflow_timeline"
+        if pattern in {"workflow_timeline", "kanban"}
+        else "master_detail",
+        "edit_pattern": "form_wizard"
+        if pattern == "workflow_timeline"
+        else ("drawer" if pattern in {"master_detail", "tree_detail"} else "dialog"),
+    }
+
+
+def _ui_plan_for(job: Dict[str, Any], modules: List[Dict[str, Any]]) -> Dict[str, str]:
+    text = f"{job.get('software_name', '')}{job.get('software_type', '')}{job.get('description', '')}"
+    if any(word in text for word in ("平台", "分析", "数据")):
+        return {
+            "shell": "top_workspace",
+            "home_pattern": "analysis_dashboard",
+            "navigation": "top",
+            "density": "comfortable",
+        }
+    if any(word in text for word in ("监控", "巡查", "告警", "指挥")):
+        return {
+            "shell": "split_console",
+            "home_pattern": "task_dashboard",
+            "navigation": "split",
+            "density": "compact",
+        }
+    return {
+        "shell": "sidebar_admin",
+        "home_pattern": "metric_dashboard",
+        "navigation": "side",
+        "density": "standard",
+    }
+
+
+def _validate_llm_industry_alignment(
+    planning: Planning, context: Dict[str, Any]
+) -> None:
+    terms = set(context["industry"].get("terms", []))
+    module_names = {
+        module.get("name", "") for module in context["industry"].get("modules", [])
+    }
+    planning_text = "".join(
+        f"{module.name}{module.description}" for module in planning.modules
+    )
+    if not any(term in planning_text for term in terms) and not any(
+        name and name in planning_text for name in module_names
+    ):
+        raise ValueError("大模型规划与所选行业知识库不一致")
 
 
 def build_planning(job: Dict[str, Any]) -> PlannerResult:
@@ -320,3 +445,139 @@ def build_planning(job: Dict[str, Any]) -> PlannerResult:
             actual_mode="template",
             fallback_reason=f"{type(exc).__name__}: {exc}",
         )
+
+
+def propose_revision(
+    job: Dict[str, Any],
+    current: Dict[str, Any],
+    instruction: str,
+) -> RevisionResult:
+    context = planning_context(job)
+    base_url = os.getenv("AI_PLANNER_BASE_URL", "https://api.openai.com/v1").rstrip("/")
+    api_key = os.getenv("AI_PLANNER_API_KEY", "").strip()
+    model = os.getenv("AI_PLANNER_MODEL", "").strip()
+    timeout = int(os.getenv("AI_PLANNER_TIMEOUT", "60"))
+    if api_key and model:
+        payload = {
+            "model": model,
+            "temperature": 0.1,
+            "response_format": {"type": "json_object"},
+            "messages": [
+                {
+                    "role": "system",
+                    "content": (
+                        "你是软件规划修改助手。根据当前 planning、行业知识库和用户意见，"
+                        "输出 JSON：summary 为修改摘要，planning 为修改后的完整规划。"
+                        "不得输出源码，不得增加与所选行业无关的功能。"
+                    ),
+                },
+                {
+                    "role": "user",
+                    "content": json.dumps(
+                        {
+                            "instruction": instruction,
+                            "current_planning": current,
+                            "industry_knowledge": context["industry"],
+                            "schema": _schema_example(),
+                        },
+                        ensure_ascii=False,
+                    ),
+                },
+            ],
+        }
+        request = urllib.request.Request(
+            f"{base_url}/chat/completions",
+            data=json.dumps(payload, ensure_ascii=False).encode("utf-8"),
+            headers={
+                "Authorization": f"Bearer {api_key}",
+                "Content-Type": "application/json",
+            },
+            method="POST",
+        )
+        try:
+            with urllib.request.urlopen(request, timeout=timeout) as response:
+                response_data = json.loads(response.read().decode("utf-8"))
+            content = response_data["choices"][0]["message"]["content"]
+            value = _extract_json(content)
+            planning = Planning.model_validate(value["planning"])
+            planning.industry_type = context["industry"]["key"]
+            planning.industry_name = context["industry"]["name"]
+            _validate_llm_industry_alignment(planning, context)
+            return RevisionResult(
+                planning=planning,
+                summary=str(value.get("summary") or instruction),
+                actual_mode="llm",
+                model=model,
+            )
+        except Exception as exc:
+            fallback_reason = f"{type(exc).__name__}: {exc}"
+    else:
+        fallback_reason = "Planner 模型未配置"
+    planning, summary = _rule_based_revision(current, instruction)
+    return RevisionResult(
+        planning=Planning.model_validate(planning),
+        summary=summary,
+        actual_mode="rules",
+        fallback_reason=fallback_reason,
+    )
+
+
+def _rule_based_revision(
+    current: Dict[str, Any], instruction: str
+) -> Tuple[Dict[str, Any], str]:
+    planning = deepcopy(current)
+    planning.pop("planner", None)
+    changes: List[str] = []
+    for index in range(len(planning["modules"]) - 1, -1, -1):
+        module = planning["modules"][index]
+        if f"删除{module['name']}" in instruction or f"移除{module['name']}" in instruction:
+            planning["modules"].pop(index)
+            planning["database_tables"].pop(index)
+            changes.append(f"删除{module['name']}")
+    addition = re.search(
+        r"(?:增加|新增)([\u4e00-\u9fa5A-Za-z0-9]{2,16}?)(?:模块|。|，|,|$)",
+        instruction,
+    )
+    if addition and len(planning["modules"]) < 8:
+        name = addition.group(1).strip()
+        key = "custom_" + hashlib.sha1(name.encode("utf-8")).hexdigest()[:8]
+        planning["modules"].append(
+            {
+                "key": key,
+                "name": name,
+                "description": f"根据用户意见新增的{name}业务模块",
+                "pages": [f"{name}列表", f"{name}详情"],
+                "fields": ["业务编号", "业务名称", "状态", "更新时间"],
+                "page_pattern": "master_detail",
+                "detail_pattern": "master_detail",
+                "edit_pattern": "drawer",
+            }
+        )
+        planning["database_tables"].append(key)
+        changes.append(f"新增{name}")
+    shell_rules = {
+        "顶部导航": ("top_workspace", "top"),
+        "侧边栏": ("sidebar_admin", "side"),
+        "分栏": ("split_console", "split"),
+    }
+    for phrase, (shell, navigation) in shell_rules.items():
+        if phrase in instruction:
+            planning["ui_plan"]["shell"] = shell
+            planning["ui_plan"]["navigation"] = navigation
+            changes.append(f"界面改为{phrase}")
+    pattern_rules = {
+        "数据驾驶舱": "dashboard",
+        "看板": "kanban",
+        "时间线": "workflow_timeline",
+        "主从": "master_detail",
+        "树形": "tree_detail",
+    }
+    for module in planning["modules"]:
+        if module["name"] in instruction:
+            for phrase, pattern in pattern_rules.items():
+                if phrase in instruction:
+                    module["page_pattern"] = pattern
+                    changes.append(f"{module['name']}改为{phrase}")
+    if len(planning["modules"]) < 3:
+        raise ValueError("修改后至少需要保留 3 个功能模块")
+    return planning, "；".join(changes) or f"已记录修改意见：{instruction}"

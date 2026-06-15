@@ -1,5 +1,7 @@
 from pathlib import Path
 from multiprocessing import Process
+import re
+import shutil
 import threading
 from datetime import datetime, timedelta
 from typing import Any, Dict, List, Literal, Optional, Set
@@ -14,18 +16,21 @@ from .settings import (
     public_planner_settings,
     save_planner_settings,
 )
-from .planner import Planning, validate_planning_against_context
-from .industry_knowledge import clarification_for, list_industries, planning_context
+from .planner import Planning, propose_revision
+from .industry_knowledge import clarification_for, list_industries
 from .workflow import (
     OUTPUT_ROOT,
     _json_read,
     _json_write,
     _update,
     create_job,
+    continue_material_generation,
     demo_runtime,
     generate_planning_draft,
     get_job,
     run_job,
+    reset_job_for_revision,
+    save_planning_version,
     start_online_demo,
     stop_online_demo,
 )
@@ -38,7 +43,6 @@ class JobRequest(BaseModel):
     industry_type: Literal[
         "public_security", "justice", "industry", "education"
     ]
-    clarification_answers: Dict[str, bool] = Field(default_factory=dict)
     planner_mode: Literal["auto", "template", "llm"] = "auto"
     codegen_mode: Literal["auto", "template", "llm"] = "auto"
     document_template: Literal["standard", "compact", "formal"] = "standard"
@@ -58,6 +62,10 @@ class ClarificationRequest(BaseModel):
     industry_type: Optional[
         Literal["public_security", "justice", "industry", "education"]
     ] = None
+
+
+class RevisionRequest(BaseModel):
+    instruction: str = Field(min_length=2, max_length=2000)
 
 
 _DEMO_START_LOCK = threading.Lock()
@@ -100,7 +108,7 @@ def planning_response(job_id: str) -> Dict[str, Any]:
     path = OUTPUT_ROOT / job_id / "planning.json"
     if not path.exists():
         raise HTTPException(status_code=409, detail="规划尚未生成")
-    planning = _json_read(path)
+    planning = Planning.model_validate(_json_read(path)).model_dump()
     page_count = 2 + sum(len(module["pages"]) for module in planning["modules"])
     table_count = len(planning["database_tables"])
     screenshot_count = 3 + len(planning["modules"])
@@ -184,10 +192,6 @@ def update_planning(job_id: str, payload: Planning) -> Dict[str, Any]:
         raise HTTPException(status_code=404, detail="任务不存在")
     if job["status"] != "draft_planning":
         raise HTTPException(status_code=409, detail="规划已锁定，禁止修改")
-    try:
-        validate_planning_against_context(payload, planning_context(job))
-    except ValueError as exc:
-        raise HTTPException(status_code=422, detail=str(exc)) from exc
     planning = payload.model_dump()
     existing_path = OUTPUT_ROOT / job_id / "planning.json"
     existing = _json_read(existing_path)
@@ -247,6 +251,10 @@ def confirm_job(job_id: str) -> Dict[str, Any]:
         raise HTTPException(status_code=409, detail="当前任务不能确认规划")
     if not (OUTPUT_ROOT / job_id / "planning.json").exists():
         raise HTTPException(status_code=409, detail="planning.json 不存在")
+    planning = _json_read(OUTPUT_ROOT / job_id / "planning.json")
+    versions_dir = OUTPUT_ROOT / job_id / "planning_versions"
+    if not versions_dir.exists() or not list(versions_dir.glob("v*.json")):
+        save_planning_version(job_id, planning, summary="首次确认规划")
     confirmed = _update(
         job_id,
         status="confirmed",
@@ -272,6 +280,8 @@ def job_status(job_id: str) -> Dict[str, Any]:
         job["demo_url"] = runtime["demo_url"]
         job["swagger_url"] = runtime["swagger_url"]
         job["run_status"] = "running"
+    job["demo_stage"] = runtime.get("stage")
+    job["demo_error"] = runtime.get("error", "")
     return job
 
 
@@ -330,7 +340,7 @@ def start_demo(job_id: str) -> Dict[str, Any]:
     job = get_job(job_id)
     if not job:
         raise HTTPException(status_code=404, detail="任务不存在")
-    if job["status"] != "success":
+    if job["status"] not in {"success", "awaiting_demo_review"}:
         raise HTTPException(status_code=409, detail="任务尚未生成完成")
     current = demo_runtime(job_id)
     if current.get("status") == "running":
@@ -353,6 +363,181 @@ def stop_demo(job_id: str) -> Dict[str, Any]:
     if not get_job(job_id):
         raise HTTPException(status_code=404, detail="任务不存在")
     return stop_online_demo(job_id)
+
+
+@app.post("/api/jobs/{job_id}/review/approve", status_code=202)
+def approve_demo_review(job_id: str) -> Dict[str, Any]:
+    job = get_job(job_id)
+    if not job:
+        raise HTTPException(status_code=404, detail="任务不存在")
+    if job["status"] != "awaiting_demo_review":
+        raise HTTPException(status_code=409, detail="当前任务不在 Demo 审查阶段")
+    updated = _update(
+        job_id,
+        status="generating_materials",
+        current_step="Demo 审查通过，准备生成软著材料",
+        review_approved_at=datetime.now().isoformat(timespec="seconds"),
+    )
+    Process(
+        target=continue_material_generation,
+        args=(job_id,),
+        name=f"materials-job-{job_id}",
+        daemon=True,
+    ).start()
+    return updated
+
+
+@app.post("/api/jobs/{job_id}/revision/propose")
+def revision_propose(job_id: str, payload: RevisionRequest) -> Dict[str, Any]:
+    job = get_job(job_id)
+    if not job:
+        raise HTTPException(status_code=404, detail="任务不存在")
+    if job["status"] not in {"awaiting_demo_review", "revision_review"}:
+        raise HTTPException(status_code=409, detail="当前任务不能提出返工意见")
+    planning_path = OUTPUT_ROOT / job_id / "planning.json"
+    result = propose_revision(job, _json_read(planning_path), payload.instruction)
+    proposal = {
+        "instruction": payload.instruction,
+        "summary": result.summary,
+        "actual_mode": result.actual_mode,
+        "model": result.model,
+        "fallback_reason": result.fallback_reason,
+        "planning": result.planning.model_dump(),
+        "created_at": datetime.now().isoformat(timespec="seconds"),
+    }
+    proposals_dir = OUTPUT_ROOT / job_id / "revision_proposals"
+    proposals_dir.mkdir(parents=True, exist_ok=True)
+    proposal_id = datetime.now().strftime("%Y%m%d%H%M%S%f")
+    proposal["proposal_id"] = proposal_id
+    _json_write(proposals_dir / f"{proposal_id}.json", proposal)
+    _json_write(OUTPUT_ROOT / job_id / "revision_proposal.json", proposal)
+    _update(
+        job_id,
+        status="revision_review",
+        current_step="等待确认规划修改",
+        revision_summary=result.summary,
+    )
+    return proposal
+
+
+@app.post("/api/jobs/{job_id}/revision/confirm", status_code=202)
+def revision_confirm(job_id: str) -> Dict[str, Any]:
+    job = get_job(job_id)
+    if not job:
+        raise HTTPException(status_code=404, detail="任务不存在")
+    if job["status"] != "revision_review":
+        raise HTTPException(status_code=409, detail="当前没有待确认的规划修改")
+    proposal_path = OUTPUT_ROOT / job_id / "revision_proposal.json"
+    if not proposal_path.exists():
+        raise HTTPException(status_code=409, detail="规划修改建议不存在")
+    proposal = _json_read(proposal_path)
+    planning = proposal["planning"]
+    _json_write(OUTPUT_ROOT / job_id / "planning.json", planning)
+    version = save_planning_version(
+        job_id,
+        planning,
+        instruction=proposal["instruction"],
+        summary=proposal["summary"],
+    )
+    reset_job_for_revision(job_id)
+    _update(job_id, planning_version=version)
+    Process(
+        target=run_job,
+        args=(job_id,),
+        name=f"revision-job-{job_id}-v{version}",
+        daemon=True,
+    ).start()
+    return get_job(job_id)
+
+
+@app.post("/api/jobs/{job_id}/revision/cancel")
+def revision_cancel(job_id: str) -> Dict[str, Any]:
+    job = get_job(job_id)
+    if not job:
+        raise HTTPException(status_code=404, detail="任务不存在")
+    if job["status"] != "revision_review":
+        raise HTTPException(status_code=409, detail="当前没有待确认的规划修改")
+    return _update(
+        job_id,
+        status="awaiting_demo_review",
+        current_step="等待用户审查在线 Demo",
+        revision_summary=None,
+    )
+
+
+@app.get("/api/jobs/{job_id}/revisions")
+def revision_history(job_id: str) -> Dict[str, Any]:
+    if not get_job(job_id):
+        raise HTTPException(status_code=404, detail="任务不存在")
+    versions = []
+    for path in sorted((OUTPUT_ROOT / job_id / "planning_versions").glob("v*.json")):
+        try:
+            data = _json_read(path)
+        except (OSError, ValueError):
+            continue
+        versions.append(
+            {
+                "version": data.get("version"),
+                "created_at": data.get("created_at"),
+                "instruction": data.get("instruction", ""),
+                "summary": data.get("summary", ""),
+            }
+        )
+    return {"items": versions}
+
+
+@app.post("/api/jobs/{job_id}/revisions/{version}/restore", status_code=202)
+def restore_revision(job_id: str, version: int) -> Dict[str, Any]:
+    job = get_job(job_id)
+    if not job:
+        raise HTTPException(status_code=404, detail="任务不存在")
+    if job["status"] not in {"awaiting_demo_review", "revision_review", "failed"}:
+        raise HTTPException(status_code=409, detail="当前任务不能回退规划")
+    path = OUTPUT_ROOT / job_id / "planning_versions" / f"v{version}.json"
+    if version < 1 or not path.exists():
+        raise HTTPException(status_code=404, detail="规划版本不存在")
+    restored = _json_read(path)["planning"]
+    _json_write(OUTPUT_ROOT / job_id / "planning.json", restored)
+    new_version = save_planning_version(
+        job_id,
+        restored,
+        instruction=f"回退到规划 v{version}",
+        summary=f"从规划 v{version} 恢复并重新生成",
+    )
+    reset_job_for_revision(job_id)
+    _update(job_id, planning_version=new_version)
+    Process(
+        target=run_job,
+        args=(job_id,),
+        name=f"restore-job-{job_id}-v{version}",
+        daemon=True,
+    ).start()
+    return get_job(job_id)
+
+
+@app.delete("/api/jobs/{job_id}")
+def delete_job(job_id: str) -> Dict[str, Any]:
+    if not re.fullmatch(r"\d{14}-[a-f0-9]{8}", job_id):
+        raise HTTPException(status_code=400, detail="任务编号不合法")
+    job = get_job(job_id)
+    if not job:
+        raise HTTPException(status_code=404, detail="任务不存在")
+    if job["status"] in {
+        "generating",
+        "confirmed",
+        "regenerating_project",
+        "generating_materials",
+    }:
+        raise HTTPException(status_code=409, detail="任务正在执行，暂不能删除")
+    stop_online_demo(job_id)
+    with _DEMO_START_LOCK:
+        _DEMO_STARTING.discard(job_id)
+    target = (OUTPUT_ROOT / job_id).resolve()
+    root = OUTPUT_ROOT.resolve()
+    if target.parent != root:
+        raise HTTPException(status_code=400, detail="任务路径不合法")
+    shutil.rmtree(target)
+    return {"deleted": True, "job_id": job_id}
 
 
 @app.get("/api/jobs/{job_id}/logs/{service}")

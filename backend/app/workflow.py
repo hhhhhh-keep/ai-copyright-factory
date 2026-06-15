@@ -217,6 +217,46 @@ def run_job(job_id: str) -> None:
             ("enhance", lambda: enhance_generated_project(job, job_dir)),
             ("run", lambda: validate_generated_project(job, job_dir)),
             ("demo", lambda: start_online_demo(job, job_dir)),
+        ]
+        for key, action in tasks:
+            _step(job_id, key, "running")
+            action()
+            _step(job_id, key, "completed")
+        _update(
+            job_id,
+            status="awaiting_demo_review",
+            progress=int(5 / len(STEPS) * 100),
+            current_step="等待用户审查在线 Demo",
+            review_round=int(job.get("review_round", 0)) + 1,
+        )
+    except Exception as exc:
+        status = get_job(job_id)
+        if status:
+            for item in status["steps"]:
+                if item["status"] == "running":
+                    item["status"] = "failed"
+            _update(
+                job_id,
+                status="failed",
+                steps=status["steps"],
+                current_step="生成失败",
+                error=f"{type(exc).__name__}: {exc}",
+            )
+
+
+def continue_material_generation(job_id: str) -> None:
+    job = get_job(job_id)
+    if not job:
+        return
+    job_dir = OUTPUT_ROOT / job_id
+    try:
+        _update(
+            job_id,
+            status="generating_materials",
+            current_step="Demo 审查通过，开始生成软著材料",
+            error=None,
+        )
+        tasks = [
             ("screenshot", lambda: capture_screenshots(job_dir)),
             ("analyze", lambda: analyze_code(job_dir)),
             ("source", lambda: generate_source_document(job_dir)),
@@ -239,9 +279,72 @@ def run_job(job_id: str) -> None:
                 job_id,
                 status="failed",
                 steps=status["steps"],
-                current_step="生成失败",
+                current_step="材料生成失败",
                 error=f"{type(exc).__name__}: {exc}",
             )
+
+
+def save_planning_version(
+    job_id: str,
+    planning: Dict[str, Any],
+    instruction: str = "",
+    summary: str = "",
+) -> int:
+    versions_dir = OUTPUT_ROOT / job_id / "planning_versions"
+    versions_dir.mkdir(parents=True, exist_ok=True)
+    version = len(list(versions_dir.glob("v*.json"))) + 1
+    _json_write(
+        versions_dir / f"v{version}.json",
+        {
+            "version": version,
+            "created_at": _now(),
+            "instruction": instruction,
+            "summary": summary,
+            "planning": planning,
+        },
+    )
+    return version
+
+
+def reset_job_for_revision(job_id: str) -> Dict[str, Any]:
+    job = get_job(job_id)
+    if not job:
+        raise ValueError("任务不存在")
+    stop_online_demo(job_id)
+    job_dir = OUTPUT_ROOT / job_id
+    for name in (
+        "generated_project",
+        ".enhancer_backup",
+        "screenshots",
+        "docs",
+        "logs",
+        "copyright_package.zip",
+        "generated_project.zip",
+        "enhancement.json",
+        "run_validation.json",
+        "code_stats.json",
+        "compliance_report.json",
+        "demo_runtime.json",
+    ):
+        path = job_dir / name
+        if path.is_dir():
+            shutil.rmtree(path)
+        elif path.exists():
+            path.unlink()
+    for item in job["steps"]:
+        if item["key"] != "planning":
+            item["status"] = "pending"
+    return _update(
+        job_id,
+        status="regenerating_project",
+        progress=10,
+        current_step="按修改后的规划重新生成项目",
+        steps=job["steps"],
+        run_status="pending",
+        demo_url=None,
+        swagger_url=None,
+        error=None,
+    )
 
 
 def generate_planning(job: Dict[str, Any], job_dir: Path) -> None:

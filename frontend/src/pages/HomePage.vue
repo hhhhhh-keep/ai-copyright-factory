@@ -10,7 +10,6 @@ const form = ref({
   description: '用于涉案车辆档案、案件关联、车辆布控预警和统计研判',
   software_type: '管理系统',
   industry_type: 'public_security',
-  clarification_answers: {},
   planner_mode: 'auto',
   codegen_mode: 'auto',
   document_template: 'standard',
@@ -27,12 +26,14 @@ const settingsOpen = ref(false)
 const settingsSaving = ref(false)
 const settingsMessage = ref('')
 const settingsError = ref('')
-const clarification = ref(null)
-const clarificationLoading = ref(false)
 const demoActionLoading = ref(false)
 const logsOpen = ref(false)
 const logService = ref('backend')
 const logContent = ref('')
+const revisionInstruction = ref('')
+const revisionProposal = ref(null)
+const revisionLoading = ref(false)
+const revisionHistory = ref([])
 const plannerSettings = ref({
   mode: 'auto',
   base_url: 'https://api.openai.com/v1',
@@ -48,9 +49,6 @@ const plannerSettings = ref({
 let timer = null
 
 const finished = computed(() => job.value?.status === 'success')
-const selectedModuleCount = computed(() =>
-  Object.values(form.value.clarification_answers).filter(Boolean).length
-)
 
 const STAGE_LABELS = {
   queued: '排队中…',
@@ -64,42 +62,7 @@ function stageLabel(stage) {
   return STAGE_LABELS[stage] || (stage ? `阶段：${stage}` : '')
 }
 
-async function loadClarifications() {
-  clarificationLoading.value = true
-  requestError.value = ''
-  try {
-    const response = await fetchWithTimeout(`${API}/api/clarifications`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        software_name: form.value.software_name,
-        description: form.value.description,
-        industry_type: form.value.industry_type
-      })
-    })
-    if (!response.ok) throw new Error(await response.text())
-    clarification.value = await response.json()
-    form.value.industry_type = clarification.value.industry.key
-    form.value.clarification_answers = Object.fromEntries(
-      clarification.value.questions.map(item => [item.module_key, item.default])
-    )
-  } catch (error) {
-    requestError.value = `需求澄清生成失败：${error.message}`
-  } finally {
-    clarificationLoading.value = false
-  }
-}
-
 async function createJob() {
-  if (!clarification.value) {
-    await loadClarifications()
-    requestError.value = '请确认需求澄清项后再次提交。'
-    return
-  }
-  if (selectedModuleCount.value < 3) {
-    requestError.value = '至少选择 3 个行业模块。'
-    return
-  }
   submitting.value = true
   requestError.value = ''
   preview.value = null
@@ -150,6 +113,11 @@ async function refresh() {
       router.push(`/planning-review/${job.value.job_id}`)
       return
     }
+    if (['awaiting_demo_review', 'revision_review'].includes(job.value.status)) {
+      clearInterval(timer)
+      loadRevisionHistory()
+      return
+    }
     if (['success', 'failed'].includes(job.value.status)) {
       clearInterval(timer)
       if (job.value.status === 'success') {
@@ -158,6 +126,114 @@ async function refresh() {
     }
   } catch (error) {
     requestError.value = '无法获取任务进度，请检查后端服务是否仍在运行。'
+  }
+}
+
+async function loadRevisionHistory() {
+  if (!job.value) return
+  try {
+    const response = await fetchWithTimeout(`${API}/api/jobs/${job.value.job_id}/revisions`)
+    if (response.ok) revisionHistory.value = (await response.json()).items || []
+  } catch {
+    revisionHistory.value = []
+  }
+}
+
+function returnHome() {
+  clearInterval(timer)
+  job.value = null
+  preview.value = null
+  revisionProposal.value = null
+  revisionInstruction.value = ''
+  revisionHistory.value = []
+  requestError.value = ''
+  router.replace('/')
+}
+
+async function approveReview() {
+  demoActionLoading.value = true
+  requestError.value = ''
+  try {
+    const response = await fetchWithTimeout(`${API}/api/jobs/${job.value.job_id}/review/approve`, {
+      method: 'POST'
+    }, 30000)
+    if (!response.ok) throw new Error((await response.json().catch(() => null))?.detail || await response.text())
+    job.value = await response.json()
+    poll()
+  } catch (error) {
+    requestError.value = `继续生成失败：${error.message}`
+  } finally {
+    demoActionLoading.value = false
+  }
+}
+
+async function proposeRevision() {
+  if (!revisionInstruction.value.trim()) {
+    requestError.value = '请先说明需要修改的内容。'
+    return
+  }
+  revisionLoading.value = true
+  requestError.value = ''
+  try {
+    const response = await fetchWithTimeout(`${API}/api/jobs/${job.value.job_id}/revision/propose`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ instruction: revisionInstruction.value })
+    }, 90000)
+    if (!response.ok) throw new Error((await response.json().catch(() => null))?.detail || await response.text())
+    revisionProposal.value = await response.json()
+    job.value.status = 'revision_review'
+  } catch (error) {
+    requestError.value = `生成修改建议失败：${error.message}`
+  } finally {
+    revisionLoading.value = false
+  }
+}
+
+async function confirmRevision() {
+  revisionLoading.value = true
+  try {
+    const response = await fetchWithTimeout(`${API}/api/jobs/${job.value.job_id}/revision/confirm`, {
+      method: 'POST'
+    }, 30000)
+    if (!response.ok) throw new Error((await response.json().catch(() => null))?.detail || await response.text())
+    job.value = await response.json()
+    revisionProposal.value = null
+    revisionInstruction.value = ''
+    poll()
+  } catch (error) {
+    requestError.value = `确认修改失败：${error.message}`
+  } finally {
+    revisionLoading.value = false
+  }
+}
+
+async function cancelRevision() {
+  const response = await fetchWithTimeout(`${API}/api/jobs/${job.value.job_id}/revision/cancel`, {
+    method: 'POST'
+  })
+  if (!response.ok) {
+    requestError.value = `取消修改失败：${await response.text()}`
+    return
+  }
+  job.value = await response.json()
+  revisionProposal.value = null
+}
+
+async function restoreRevision(version) {
+  if (!window.confirm(`确认回退到规划 v${version} 并重新生成项目吗？`)) return
+  revisionLoading.value = true
+  try {
+    const response = await fetchWithTimeout(`${API}/api/jobs/${job.value.job_id}/revisions/${version}/restore`, {
+      method: 'POST'
+    }, 30000)
+    if (!response.ok) throw new Error((await response.json().catch(() => null))?.detail || await response.text())
+    job.value = await response.json()
+    poll()
+  } catch (error) {
+    requestError.value = `回退规划失败：${error.message}`
+  } finally {
+    revisionLoading.value = false
   }
 }
 
@@ -287,7 +363,7 @@ onBeforeUnmount(() => clearInterval(timer))
     <header>
       <div class="logo">AI</div>
       <div><h1>AI软著工厂</h1><p>模板驱动的软件著作权材料生成工具</p></div>
-      <div class="header-actions"><span>Planning Review · V1.0</span><button @click="router.push('/history')">历史任务</button></div>
+      <div class="header-actions"><span>Planning Review · V1.0</span><button v-if="route.query.jobId" @click="returnHome">返回首页</button><button @click="router.push('/history')">历史任务</button></div>
     </header>
 
     <main>
@@ -323,25 +399,12 @@ onBeforeUnmount(() => clearInterval(timer))
           <label>软件类型</label>
           <select v-model="form.software_type"><option>管理系统</option><option>数据平台</option><option>工具软件</option></select>
           <label>行业类型</label>
-          <select v-model="form.industry_type" @change="clarification = null">
+          <select v-model="form.industry_type">
             <option value="public_security">公安</option>
             <option value="justice">政法</option>
             <option value="industry">工业</option>
             <option value="education">教育</option>
           </select>
-          <button class="clarify" :disabled="clarificationLoading" @click="loadClarifications">
-            {{ clarificationLoading ? '正在检索知识库...' : '生成需求澄清' }}
-          </button>
-          <div v-if="clarification" class="clarification">
-            <div class="clarification-title">
-              <b>{{clarification.industry.name}}行业模块确认</b>
-              <span>已选择 {{selectedModuleCount}} 项</span>
-            </div>
-            <label v-for="item in clarification.questions" :key="item.module_key" class="question">
-              <input v-model="form.clarification_answers[item.module_key]" type="checkbox">
-              <span><b>{{item.module_name}}</b>{{item.question}}</span>
-            </label>
-          </div>
           <label>规划模式</label>
           <select v-model="form.planner_mode">
             <option value="auto">自动（优先 LLM，失败回退模板）</option>
@@ -418,11 +481,36 @@ onBeforeUnmount(() => clearInterval(timer))
               <a v-if="job.run_status === 'running'" :href="job.demo_url" target="_blank">查看 Demo</a>
               <a v-if="job.run_status === 'running'" :href="job.swagger_url" target="_blank">查看 Swagger</a>
               <button v-if="job.run_status === 'running'" :disabled="demoActionLoading" @click="stopDemo">关闭 Demo</button>
-              <button v-else :disabled="demoActionLoading || job.status !== 'success'" @click="startDemo">
+              <button v-else :disabled="demoActionLoading || !['success','awaiting_demo_review'].includes(job.status)" @click="startDemo">
                 {{ demoActionLoading || job.run_status === 'starting' ? '启动中…' : (job.run_status === 'failed' ? '重新启动 Demo' : '启动 Demo') }}
               </button>
               <button :class="{'error-action': job.run_status === 'failed'}" @click="showLogs('backend')">后端日志</button>
               <button @click="showLogs('frontend')">前端日志</button>
+            </div>
+          </div>
+          <div class="review-panel" v-if="job?.status === 'awaiting_demo_review'">
+            <h3>Demo 人工审查</h3>
+            <p>请先查看在线 Demo。确认符合预期后再生成截图和软著材料；如需调整，请用自然语言说明。</p>
+            <div class="review-actions-inline">
+              <button class="approve-review" :disabled="demoActionLoading" @click="approveReview">符合预期，继续生成软著材料</button>
+            </div>
+            <textarea v-model="revisionInstruction" rows="4" placeholder="例如：删除视频巡查，案件详情改成时间线，整体改为顶部导航。"></textarea>
+            <button class="revision-button" :disabled="revisionLoading" @click="proposeRevision">{{revisionLoading ? '正在分析修改意见...' : '生成规划修改建议'}}</button>
+          </div>
+          <div class="review-panel proposal" v-if="job?.status === 'revision_review'">
+            <h3>确认规划修改</h3>
+            <p><b>修改摘要：</b>{{revisionProposal?.summary || job.revision_summary}}</p>
+            <p v-if="revisionProposal"><b>处理模式：</b>{{revisionProposal.actual_mode === 'llm' ? `大模型 ${revisionProposal.model || ''}` : '本地规则回退'}}</p>
+            <div class="review-actions-inline">
+              <button @click="cancelRevision">取消修改</button>
+              <button class="approve-review" :disabled="revisionLoading" @click="confirmRevision">{{revisionLoading ? '正在提交...' : '确认并重新生成项目'}}</button>
+            </div>
+          </div>
+          <div class="revision-history" v-if="revisionHistory.length && ['awaiting_demo_review','revision_review'].includes(job?.status)">
+            <b>规划版本</b>
+            <div v-for="item in revisionHistory" :key="item.version">
+              <span>v{{item.version}} · {{item.summary || '已确认规划'}}</span>
+              <button :disabled="revisionLoading" @click="restoreRevision(item.version)">回退并重建</button>
             </div>
           </div>
           <a v-if="finished" class="download" :href="`${API}/api/jobs/${job.job_id}/download`">下载 copyright_package.zip</a>
