@@ -1,8 +1,18 @@
+"""软件规划器。
+
+ISSUE-007 实施后，Planner 完全由 LLM 驱动：
+
+- 只读取软件名称、类型、描述和行业名称；行业仅作为普通上下文，不再约束模块范围。
+- 不再读取 `industry_knowledge/`，不再做行业一致性校验。
+- 不再有 `auto/llm/template` 模式与模板回退。
+- 首次 JSON 解析或 Pydantic 校验失败时，自动将错误摘要和原响应发回模型请求修复一次。
+- 二次仍失败或 API 调用失败时，抛出原始错误，调用方将任务置为 `failed`，由用户重试。
+- `propose_revision()` 同步改为 LLM-only，使用相同的 JSON 容错和一次自动修复。
+"""
+
 import json
-import hashlib
 import os
 import re
-from copy import deepcopy
 import urllib.error
 import urllib.request
 from pathlib import Path
@@ -10,8 +20,6 @@ from typing import Any, Dict, List, Literal, Optional, Tuple
 
 from dotenv import load_dotenv
 from pydantic import BaseModel, Field, field_validator, model_validator
-
-from .industry_knowledge import planning_context
 
 
 load_dotenv(Path(__file__).resolve().parents[1] / ".env")
@@ -42,7 +50,7 @@ class ModulePlan(BaseModel):
     name: str = Field(min_length=2, max_length=30)
     description: str = Field(default="", max_length=300)
     pages: List[str] = Field(min_length=1, max_length=8)
-    fields: List[str] = Field(min_length=2, max_length=12)
+    fields: List[str] = Field(min_length=2, max_length=20)
     page_pattern: PagePattern = "table_crud"
     detail_pattern: PagePattern = "master_detail"
     edit_pattern: Literal["dialog", "drawer", "form_wizard"] = "dialog"
@@ -96,103 +104,33 @@ class Planning(BaseModel):
 
 class PlannerResult(BaseModel):
     planning: Planning
-    requested_mode: Literal["template", "llm", "auto"]
-    actual_mode: Literal["template", "llm"]
     model: Optional[str] = None
-    fallback_reason: Optional[str] = None
 
 
 class RevisionResult(BaseModel):
     planning: Planning
     summary: str
-    actual_mode: Literal["llm", "rules"]
     model: Optional[str] = None
-    fallback_reason: Optional[str] = None
 
 
-def validate_planning_against_context(
-    planning: Planning,
-    context: Dict[str, Any],
-    require_all_modules: bool = False,
-) -> None:
-    allowed_keys = set(context["allowed_module_keys"])
-    actual_keys = {module.key for module in planning.modules}
-    if not actual_keys.issubset(allowed_keys) or (
-        require_all_modules and actual_keys != allowed_keys
-    ):
-        missing = ", ".join(sorted(allowed_keys - actual_keys))
-        invalid = ", ".join(sorted(actual_keys - allowed_keys))
-        details = []
-        if missing:
-            details.append(f"缺少已确认模块: {missing}")
-        if invalid:
-            details.append(f"包含未确认模块: {invalid}")
-        raise ValueError("；".join(details))
+# ---------- 行业基础映射（仅 key -> 显示名，不含知识库） ----------
 
-    source_modules = {module["key"]: module for module in context["modules"]}
-    allowed_tables = {
-        module["table"]
-        for module in context["modules"]
-        if module["key"] in actual_keys
-    }
-    if set(planning.database_tables) != allowed_tables:
-        raise ValueError("数据库表必须与当前行业模块一致")
-    for module in planning.modules:
-        source = source_modules[module.key]
-        if not set(module.pages).issubset(set(source["pages"])):
-            raise ValueError(f"模块 {module.key} 包含知识库之外的页面")
-        if not set(module.fields).issubset(set(source["fields"])):
-            raise ValueError(f"模块 {module.key} 包含知识库之外的字段")
+INDUSTRY_DISPLAY_NAMES = {
+    "public_security": "公安",
+    "justice": "政法",
+    "industry": "工业",
+    "education": "教育",
+}
 
 
-def template_planning(job: Dict[str, Any]) -> Planning:
-    context = planning_context(job)
-    industry = context["industry"]
-    modules = context["modules"]
-    return Planning.model_validate(
-        {
-            "software_name": job["software_name"],
-            "description": job["description"]
-            or f"面向{industry['name']}行业的业务管理、过程跟踪和统计分析平台",
-            "software_type": job["software_type"],
-            "industry_type": industry["key"],
-            "industry_name": industry["name"],
-            "target_users": industry["target_users"],
-            "ui_plan": _ui_plan_for(job, modules),
-            "modules": [
-                {
-                    **{
-                        key: value
-                        for key, value in module.items()
-                        if key in {"key", "name", "description", "pages", "fields"}
-                    },
-                    **_module_ui(module, index),
-                }
-                for index, module in enumerate(modules)
-            ],
-            "database_tables": [module["table"] for module in modules],
-            "api_list": [
-                route
-                for module in modules
-                for route in (
-                    f"GET /api/{module['key']}",
-                    f"POST /api/{module['key']}",
-                    f"PUT /api/{module['key']}/{{id}}",
-                    f"DELETE /api/{module['key']}/{{id}}",
-                )
-            ],
-            "screenshots": ["登录页", "首页"] + [module["name"] for module in modules],
-            "document_outline": [
-                "系统概述",
-                "总体架构",
-                "功能设计",
-                "数据库设计",
-                "接口设计",
-                "部署说明",
-                "页面说明",
-            ],
-        }
-    )
+def industry_name_for(key: str) -> str:
+    """根据行业内部编码返回显示名。找不到时返回空串。"""
+    if not key:
+        return ""
+    return INDUSTRY_DISPLAY_NAMES.get(key, "")
+
+
+# ---------- Schema example and messages ----------
 
 
 def _schema_example() -> Dict[str, Any]:
@@ -239,69 +177,229 @@ def _schema_example() -> Dict[str, Any]:
                 "edit_pattern": "dialog",
             },
         ],
-        "database_tables": ["items", "records"],
+        "database_tables": ["items", "records", "reports"],
         "api_list": ["GET /api/items", "POST /api/items", "GET /api/reports"],
         "screenshots": ["登录页", "首页", "信息管理", "统计分析"],
         "document_outline": ["项目概述", "总体设计", "功能设计", "数据设计"],
     }
 
 
-def _messages(job: Dict[str, Any], context: Dict[str, Any]) -> List[Dict[str, str]]:
-    industry = context["industry"]
-    modules = context["modules"]
+def _industry_hint_text(job: Dict[str, Any]) -> str:
+    """根据 job 中的行业信息生成"行业参考"提示文本。
+
+    优先使用 job['industry_name']，否则用行业内部编码查 INDUSTRY_DISPLAY_NAMES。
+    最终传给模型的始终是显示名（如"公安"），不是内部编码（如"public_security"）。
+    """
+    code = job.get("industry_type") or ""
+    name = job.get("industry_name") or industry_name_for(code) or ""
+    if not name:
+        return ""
+    return f"行业参考：{name}（仅作为业务背景，不限制模块范围）\n"
+
+
+def _initial_messages(job: Dict[str, Any]) -> List[Dict[str, str]]:
     system = (
-        "你是软件产品规划器。只输出一个合法 JSON 对象，不要 Markdown、解释或代码围栏。"
-        "规划必须先参考提供的行业知识库，并结合软件名称、类型和描述选择最相关模块。"
-        "允许对知识库模块做面向当前软件的合理命名和组合，但不得生成与行业无关的功能。"
-        "modules 数量为 3 到 8；每个模块 key 使用小写英文 snake_case 且唯一；"
-        "每个模块包含 1 到 8 个 pages、2 到 12 个 fields。"
-        "每个模块必须提供 description；必须提供 target_users。"
-        "screenshots 只能引用登录页、首页或 modules 中存在的模块。"
-        "必须生成 ui_plan；每个模块必须选择 page_pattern、detail_pattern 和 edit_pattern。"
-        "同一规划至少使用两种 page_pattern，不能把全部模块都生成为 table_crud。"
+        "你是软件产品规划器。直接根据用户提供的软件名称、软件类型和软件描述，"
+        "输出一个结构化的软件规划 JSON 对象。\n"
+        "- 行业字段仅作为普通参考信息，禁止把行业关键词当作模块白名单。\n"
+        "- modules 数量为 3 到 8；每个模块 key 使用小写英文 snake_case 且唯一。\n"
+        "- 每个模块包含 1 到 8 个 pages；fields 建议 6 到 12 个，最多 20 个。\n"
+        "- 每个模块必须提供 description；必须提供 target_users。\n"
+        "- screenshots 只能引用登录页、首页或 modules 中存在的模块。\n"
+        "- 必须生成 ui_plan；每个模块必须选择 page_pattern、detail_pattern 和 edit_pattern。\n"
+        "- 同一规划至少使用两种 page_pattern，不能把全部模块都生成为 table_crud。\n"
+        "- 只输出一个合法 JSON 对象，不要 Markdown 围栏、不要解释、不要尾随说明。"
     )
+    industry_hint = _industry_hint_text(job)
     user = (
         "请为以下软件生成结构化规划。\n"
         f"软件名称：{job['software_name']}\n"
         f"软件描述：{job.get('description') or '未提供，请根据软件名称做最小合理规划'}\n"
         f"软件类型：{job.get('software_type') or '管理系统'}\n"
-        f"行业：{industry['name']}（{industry['key']}）\n"
-        "允许使用的行业知识库：\n"
-        + json.dumps(
-            {
-                "terms": industry["terms"],
-                "target_users": industry["target_users"],
-                "modules": modules,
-            },
-            ensure_ascii=False,
-        )
-        + "\n"
+        f"{industry_hint}"
         "输出 JSON 结构参考：\n"
         + json.dumps(_schema_example(), ensure_ascii=False)
     )
     return [{"role": "system", "content": system}, {"role": "user", "content": user}]
 
 
-def _extract_json(text: str) -> Dict[str, Any]:
+def _repair_messages(
+    job: Dict[str, Any],
+    original_text: str,
+    error_text: str,
+) -> List[Dict[str, str]]:
+    system = (
+        "你之前的输出无法被解析或不符合目标 JSON schema。"
+        "请重新输出一个严格符合目标 schema 的合法 JSON 对象。"
+        "只输出 JSON 本身，不要 Markdown 围栏、不要解释、不要尾随说明。"
+    )
+    industry_hint = _industry_hint_text(job)
+    user = (
+        f"软件名称：{job['software_name']}\n"
+        f"软件描述：{job.get('description') or '未提供'}\n"
+        f"软件类型：{job.get('software_type') or '管理系统'}\n"
+        f"{industry_hint}\n"
+        "你之前的原始输出：\n"
+        f"{original_text}\n\n"
+        "解析/校验错误摘要：\n"
+        f"{error_text}\n\n"
+        "目标 JSON 结构参考：\n"
+        + json.dumps(_schema_example(), ensure_ascii=False)
+        + "\n\n请重新输出符合 schema 的 JSON 对象。"
+    )
+    return [{"role": "system", "content": system}, {"role": "user", "content": user}]
+
+
+def _revision_messages(
+    job: Dict[str, Any],
+    current: Dict[str, Any],
+    instruction: str,
+) -> List[Dict[str, str]]:
+    system = (
+        "你是软件规划修改助手。根据当前规划和用户意见，输出 JSON："
+        "summary 为修改摘要，planning 为修改后的完整规划。"
+        "只输出 JSON 本身，不要 Markdown 围栏、不要解释。"
+        "行业字段仅作为业务背景，禁止把行业当作模块白名单。"
+        "不得输出源码。"
+    )
+    industry_hint = _industry_hint_text(job)
+    user = json.dumps(
+        {
+            "instruction": instruction,
+            "current_planning": current,
+            "industry_hint": industry_hint.strip(),
+            "schema": _schema_example(),
+        },
+        ensure_ascii=False,
+    )
+    return [{"role": "system", "content": system}, {"role": "user", "content": user}]
+
+
+# ---------- 用户输入字段强制恢复 ----------
+
+
+def _restore_user_input_fields(planning: Planning, job: Dict[str, Any]) -> Planning:
+    """强制恢复用户输入的任务基本信息，避免 LLM 篡改。
+
+    覆盖字段：software_name、description（若用户提供）、software_type（若用户提供）、
+    industry_type、industry_name（按内部编码查显示名）。
+    propose_revision 入口不调用本函数，因为它代表用户主动的"重命名/换行业"操作。
+    """
+    planning.software_name = job["software_name"]
+    description = job.get("description")
+    if description is not None and description.strip():
+        planning.description = description
+    software_type = job.get("software_type")
+    if software_type is not None and software_type.strip():
+        planning.software_type = software_type
+    industry_code = job.get("industry_type") or ""
+    if industry_code:
+        planning.industry_type = industry_code
+        planning.industry_name = industry_name_for(industry_code)
+    elif job.get("industry_name"):
+        planning.industry_name = job["industry_name"]
+    return planning
+
+
+# ---------- JSON 容错 ----------
+
+
+def _strip_code_fence(text: str) -> str:
     content = text.strip()
     if content.startswith("```"):
-        content = re.sub(r"^```(?:json)?\s*", "", content)
-        content = re.sub(r"\s*```$", "", content)
+        content = re.sub(r"^```(?:json)?\s*", "", content, count=1)
+        content = re.sub(r"\s*```\s*$", "", content, count=1)
+    return content.strip()
+
+
+def _first_json_object(text: str) -> str:
+    """从包含前后说明或多个对象的文本中提取首个完整 JSON 对象。
+
+    规则：
+    1. 先去掉代码围栏。
+    2. 找出所有顶层 `{` 起点，对每个起点匹配对应的 `}`，得到候选子串。
+    3. 逐个 `json.loads` 验证，验证通过的第一个就是返回结果。
+    4. 字符串字面量内的引号和括号不被算作边界。
+    """
+    stripped = _strip_code_fence(text)
+    if stripped.startswith("{") and stripped.endswith("}"):
+        # 快速路径：去除空白后看起来就是单对象，先做一次 JSON 校验
+        try:
+            json.loads(stripped)
+            return stripped
+        except json.JSONDecodeError:
+            pass  # 走到下面的候选匹配
+
+    # 收集所有顶层 `{` 起点（不在字符串内的 `{`）
+    in_string = False
+    escape = False
+    candidates: List[int] = []
+    for index, char in enumerate(stripped):
+        if in_string:
+            if escape:
+                escape = False
+            elif char == "\\":
+                escape = True
+            elif char == '"':
+                in_string = False
+            continue
+        if char == '"':
+            in_string = True
+        elif char == "{":
+            candidates.append(index)
+        elif char == "}":
+            # 顶级 `}` 不是起点；忽略即可
+            continue
+
+    # 对每个起点，从起点开始寻找与之配对的 `}` 并尝试解析
+    for start in candidates:
+        in_string = False
+        escape = False
+        depth = 0
+        for index in range(start, len(stripped)):
+            char = stripped[index]
+            if in_string:
+                if escape:
+                    escape = False
+                elif char == "\\":
+                    escape = True
+                elif char == '"':
+                    in_string = False
+                continue
+            if char == '"':
+                in_string = True
+            elif char == "{":
+                depth += 1
+            elif char == "}":
+                depth -= 1
+                if depth == 0:
+                    candidate = stripped[start : index + 1]
+                    try:
+                        json.loads(candidate)
+                        return candidate
+                    except json.JSONDecodeError:
+                        # 该起点不是合法 JSON，跳到下一个起点
+                        break
+        # 配对失败或解析失败，继续下一个起点
+
+    raise ValueError("模型响应中没有合法 JSON 对象")
+
+
+def _extract_json(text: str) -> Dict[str, Any]:
+    content = _first_json_object(text)
     try:
         value = json.loads(content)
-    except json.JSONDecodeError:
-        start = content.find("{")
-        end = content.rfind("}")
-        if start < 0 or end <= start:
-            raise ValueError("模型响应中没有 JSON 对象")
-        value = json.loads(content[start : end + 1])
+    except json.JSONDecodeError as exc:
+        raise ValueError(f"JSON 解析失败: {exc.msg}（位置 {exc.lineno}:{exc.colno}）") from exc
     if not isinstance(value, dict):
         raise ValueError("模型响应必须是 JSON 对象")
     return value
 
 
-def _request_llm(job: Dict[str, Any]) -> Tuple[Planning, str]:
-    context = planning_context(job)
+# ---------- LLM 调用 ----------
+
+
+def _planner_endpoint() -> Tuple[str, str, str, int]:
     base_url = os.getenv("AI_PLANNER_BASE_URL", "https://api.openai.com/v1").rstrip("/")
     api_key = os.getenv("AI_PLANNER_API_KEY", "").strip()
     model = os.getenv("AI_PLANNER_MODEL", "").strip()
@@ -310,15 +408,19 @@ def _request_llm(job: Dict[str, Any]) -> Tuple[Planning, str]:
         raise RuntimeError("未配置 AI_PLANNER_API_KEY")
     if not model:
         raise RuntimeError("未配置 AI_PLANNER_MODEL")
+    return f"{base_url}/chat/completions", api_key, model, timeout
 
+
+def _post_chat_completion(messages: List[Dict[str, str]], temperature: float) -> str:
+    url, api_key, model, timeout = _planner_endpoint()
     payload = {
         "model": model,
-        "messages": _messages(job, context),
-        "temperature": 0.2,
+        "messages": messages,
+        "temperature": temperature,
         "response_format": {"type": "json_object"},
     }
     request = urllib.request.Request(
-        f"{base_url}/chat/completions",
+        url,
         data=json.dumps(payload, ensure_ascii=False).encode("utf-8"),
         headers={
             "Authorization": f"Bearer {api_key}",
@@ -334,117 +436,87 @@ def _request_llm(job: Dict[str, Any]) -> Tuple[Planning, str]:
         raise RuntimeError(f"Planner API 返回 HTTP {exc.code}: {detail}") from exc
     except urllib.error.URLError as exc:
         raise RuntimeError(f"Planner API 连接失败: {exc.reason}") from exc
-
     try:
-        content = response_data["choices"][0]["message"]["content"]
+        return response_data["choices"][0]["message"]["content"]
     except (KeyError, IndexError, TypeError) as exc:
         raise RuntimeError("Planner API 响应缺少 choices[0].message.content") from exc
-    planning = Planning.model_validate(_extract_json(content))
-    planning.software_name = job["software_name"]
-    planning.description = job.get("description") or planning.description
-    planning.software_type = job.get("software_type") or planning.software_type
-    planning.industry_type = context["industry"]["key"]
-    planning.industry_name = context["industry"]["name"]
-    _validate_llm_industry_alignment(planning, context)
-    return planning, model
 
 
-def _module_ui(module: Dict[str, Any], index: int) -> Dict[str, str]:
-    text = f"{module.get('name', '')}{module.get('description', '')}"
-    if any(word in text for word in ("统计", "分析", "研判", "监测")):
-        pattern = "dashboard"
-    elif any(word in text for word in ("案件", "审批", "流转", "工单")):
-        pattern = "workflow_timeline"
-    elif any(word in text for word in ("档案", "卷宗", "组织", "设备")):
-        pattern = "tree_detail"
-    elif any(word in text for word in ("告警", "预警", "巡查")):
-        pattern = "kanban"
-    else:
-        pattern = "master_detail" if index % 2 else "table_crud"
-    return {
-        "page_pattern": pattern,
-        "detail_pattern": "workflow_timeline"
-        if pattern in {"workflow_timeline", "kanban"}
-        else "master_detail",
-        "edit_pattern": "form_wizard"
-        if pattern == "workflow_timeline"
-        else ("drawer" if pattern in {"master_detail", "tree_detail"} else "dialog"),
-    }
+def _parse_and_validate(text: str) -> Planning:
+    raw = _extract_json(text)
+    return Planning.model_validate(raw)
 
 
-def _ui_plan_for(job: Dict[str, Any], modules: List[Dict[str, Any]]) -> Dict[str, str]:
-    text = f"{job.get('software_name', '')}{job.get('software_type', '')}{job.get('description', '')}"
-    if any(word in text for word in ("平台", "分析", "数据")):
-        return {
-            "shell": "top_workspace",
-            "home_pattern": "analysis_dashboard",
-            "navigation": "top",
-            "density": "comfortable",
-        }
-    if any(word in text for word in ("监控", "巡查", "告警", "指挥")):
-        return {
-            "shell": "split_console",
-            "home_pattern": "task_dashboard",
-            "navigation": "split",
-            "density": "compact",
-        }
-    return {
-        "shell": "sidebar_admin",
-        "home_pattern": "metric_dashboard",
-        "navigation": "side",
-        "density": "standard",
-    }
+# ---------- 单次规划 + 一次自动修复 ----------
 
 
-def _validate_llm_industry_alignment(
-    planning: Planning, context: Dict[str, Any]
-) -> None:
-    terms = set(context["industry"].get("terms", []))
-    module_names = {
-        module.get("name", "") for module in context["industry"].get("modules", [])
-    }
-    planning_text = "".join(
-        f"{module.name}{module.description}" for module in planning.modules
-    )
-    if not any(term in planning_text for term in terms) and not any(
-        name and name in planning_text for name in module_names
-    ):
-        raise ValueError("大模型规划与所选行业知识库不一致")
+def _generate_with_repair(
+    job: Dict[str, Any],
+    messages_for: Any,
+    postprocess: Any,
+    temperature: float,
+) -> Tuple[Planning, str]:
+    """统一封装：先按 messages_for(job) 调用一次，失败自动修复一次。
+
+    `messages_for`: 可调用对象，接收一个 (job, payload) 元组返回消息列表。
+    `postprocess`: 接收 (planning, payload) 并返回最终结果对象（用于 revision/initial 不同返回类型）。
+    `temperature`: 浮点温度。
+
+    抛出原始错误时把任务交给调用方处理。
+    """
+    initial_messages = messages_for(job)
+    model_name = os.getenv("AI_PLANNER_MODEL", "").strip() or None
+    try:
+        first_text = _post_chat_completion(initial_messages, temperature)
+    except Exception:
+        # API 调用失败不进入修复路径，直接抛出
+        raise
+    try:
+        planning = _parse_and_validate(first_text)
+        return postprocess(planning, first_text), model_name
+    except Exception as first_exc:
+        first_error = f"{type(first_exc).__name__}: {first_exc}"
+        # 修复阶段：把错误摘要、原响应和目标 schema 一起发给模型
+        repair_messages = _repair_messages(job, first_text, first_error)
+        second_text = _post_chat_completion(repair_messages, temperature)
+        planning = _parse_and_validate(second_text)
+        return postprocess(planning, second_text), model_name
+
+
+def _build_planning_result(planning: Planning, _text: str) -> Planning:
+    return planning
 
 
 def build_planning(job: Dict[str, Any]) -> PlannerResult:
-    requested_mode = (
-        job.get("planner_requested_mode")
-        or job.get("planner_mode")
-        or os.getenv("AI_PLANNER_MODE", "auto")
-    ).strip().lower()
-    if requested_mode not in {"template", "llm", "auto"}:
-        raise RuntimeError("AI_PLANNER_MODE 必须是 template、llm 或 auto")
+    """仅走 LLM 路径；失败抛错，调用方负责把任务置为 failed。
 
-    if requested_mode == "template":
-        return PlannerResult(
-            planning=template_planning(job),
-            requested_mode="template",
-            actual_mode="template",
-        )
+    无论 LLM 返回什么，最终都会用用户的原始输入（software_name / description /
+    software_type / industry_type / industry_name）覆盖 planning 中对应字段，
+    防止模型篡改任务基本信息。`propose_revision` 不走此覆盖，因为它代表用户
+    主动的"重命名/换行业"操作。
+    """
+    planning, model_name = _generate_with_repair(
+        job=job,
+        messages_for=_initial_messages,
+        postprocess=_build_planning_result,
+        temperature=0.2,
+    )
+    planning = _restore_user_input_fields(planning, job)
+    return PlannerResult(planning=planning, model=model_name)
 
+
+# ---------- 返工：LLM-only + 一次自动修复 ----------
+
+
+def _build_revision_payload(planning: Planning, text: str) -> Dict[str, Any]:
     try:
-        planning, model = _request_llm(job)
-        return PlannerResult(
-            planning=planning,
-            requested_mode=requested_mode,
-            actual_mode="llm",
-            model=model,
-        )
-    except Exception as exc:
-        if requested_mode == "llm":
-            raise
-        return PlannerResult(
-            planning=template_planning(job),
-            requested_mode="auto",
-            actual_mode="template",
-            fallback_reason=f"{type(exc).__name__}: {exc}",
-        )
+        payload = _extract_json(text)
+    except Exception:
+        # 修复路径下 second_text 也可能不是 JSON；统一转交
+        raise
+    if not isinstance(payload, dict) or "planning" not in payload:
+        raise ValueError("返工响应必须包含 planning 字段")
+    return payload
 
 
 def propose_revision(
@@ -452,132 +524,55 @@ def propose_revision(
     current: Dict[str, Any],
     instruction: str,
 ) -> RevisionResult:
-    context = planning_context(job)
-    base_url = os.getenv("AI_PLANNER_BASE_URL", "https://api.openai.com/v1").rstrip("/")
-    api_key = os.getenv("AI_PLANNER_API_KEY", "").strip()
-    model = os.getenv("AI_PLANNER_MODEL", "").strip()
-    timeout = int(os.getenv("AI_PLANNER_TIMEOUT", "60"))
-    if api_key and model:
-        payload = {
-            "model": model,
-            "temperature": 0.1,
-            "response_format": {"type": "json_object"},
-            "messages": [
-                {
-                    "role": "system",
-                    "content": (
-                        "你是软件规划修改助手。根据当前 planning、行业知识库和用户意见，"
-                        "输出 JSON：summary 为修改摘要，planning 为修改后的完整规划。"
-                        "不得输出源码，不得增加与所选行业无关的功能。"
-                    ),
-                },
-                {
-                    "role": "user",
-                    "content": json.dumps(
-                        {
-                            "instruction": instruction,
-                            "current_planning": current,
-                            "industry_knowledge": context["industry"],
-                            "schema": _schema_example(),
-                        },
-                        ensure_ascii=False,
-                    ),
-                },
-            ],
-        }
-        request = urllib.request.Request(
-            f"{base_url}/chat/completions",
-            data=json.dumps(payload, ensure_ascii=False).encode("utf-8"),
-            headers={
-                "Authorization": f"Bearer {api_key}",
-                "Content-Type": "application/json",
-            },
-            method="POST",
+    """对话式返工：仅 LLM，失败抛错，不回退到规则改写。"""
+    initial_messages = _revision_messages(job, current, instruction)
+    model_name = os.getenv("AI_PLANNER_MODEL", "").strip() or None
+    try:
+        first_text = _post_chat_completion(initial_messages, 0.1)
+    except Exception:
+        raise
+    try:
+        payload = _extract_json(first_text)
+        if not isinstance(payload, dict) or "planning" not in payload:
+            raise ValueError("返工响应必须包含 planning 字段")
+        planning = Planning.model_validate(payload["planning"])
+        return RevisionResult(
+            planning=planning,
+            summary=str(payload.get("summary") or instruction),
+            model=model_name,
         )
-        try:
-            with urllib.request.urlopen(request, timeout=timeout) as response:
-                response_data = json.loads(response.read().decode("utf-8"))
-            content = response_data["choices"][0]["message"]["content"]
-            value = _extract_json(content)
-            planning = Planning.model_validate(value["planning"])
-            planning.industry_type = context["industry"]["key"]
-            planning.industry_name = context["industry"]["name"]
-            _validate_llm_industry_alignment(planning, context)
-            return RevisionResult(
-                planning=planning,
-                summary=str(value.get("summary") or instruction),
-                actual_mode="llm",
-                model=model,
-            )
-        except Exception as exc:
-            fallback_reason = f"{type(exc).__name__}: {exc}"
-    else:
-        fallback_reason = "Planner 模型未配置"
-    planning, summary = _rule_based_revision(current, instruction)
-    return RevisionResult(
-        planning=Planning.model_validate(planning),
-        summary=summary,
-        actual_mode="rules",
-        fallback_reason=fallback_reason,
-    )
-
-
-def _rule_based_revision(
-    current: Dict[str, Any], instruction: str
-) -> Tuple[Dict[str, Any], str]:
-    planning = deepcopy(current)
-    planning.pop("planner", None)
-    changes: List[str] = []
-    for index in range(len(planning["modules"]) - 1, -1, -1):
-        module = planning["modules"][index]
-        if f"删除{module['name']}" in instruction or f"移除{module['name']}" in instruction:
-            planning["modules"].pop(index)
-            planning["database_tables"].pop(index)
-            changes.append(f"删除{module['name']}")
-    addition = re.search(
-        r"(?:增加|新增)([\u4e00-\u9fa5A-Za-z0-9]{2,16}?)(?:模块|。|，|,|$)",
-        instruction,
-    )
-    if addition and len(planning["modules"]) < 8:
-        name = addition.group(1).strip()
-        key = "custom_" + hashlib.sha1(name.encode("utf-8")).hexdigest()[:8]
-        planning["modules"].append(
+    except Exception as first_exc:
+        first_error = f"{type(first_exc).__name__}: {first_exc}"
+        # 修复提示里把当前规划和用户意见一起带上
+        repair_system = (
+            "你之前的返工输出无法被解析或不符合目标 JSON schema。"
+            "请重新输出一个严格符合 schema 的 JSON 对象，"
+            "其中 planning 字段为修改后的完整规划，summary 字段为修改摘要。"
+            "只输出 JSON 本身，不要 Markdown 围栏、不要解释。"
+        )
+        repair_user = json.dumps(
             {
-                "key": key,
-                "name": name,
-                "description": f"根据用户意见新增的{name}业务模块",
-                "pages": [f"{name}列表", f"{name}详情"],
-                "fields": ["业务编号", "业务名称", "状态", "更新时间"],
-                "page_pattern": "master_detail",
-                "detail_pattern": "master_detail",
-                "edit_pattern": "drawer",
-            }
+                "instruction": instruction,
+                "current_planning": current,
+                "previous_output": first_text,
+                "error": first_error,
+                "schema": _schema_example(),
+            },
+            ensure_ascii=False,
         )
-        planning["database_tables"].append(key)
-        changes.append(f"新增{name}")
-    shell_rules = {
-        "顶部导航": ("top_workspace", "top"),
-        "侧边栏": ("sidebar_admin", "side"),
-        "分栏": ("split_console", "split"),
-    }
-    for phrase, (shell, navigation) in shell_rules.items():
-        if phrase in instruction:
-            planning["ui_plan"]["shell"] = shell
-            planning["ui_plan"]["navigation"] = navigation
-            changes.append(f"界面改为{phrase}")
-    pattern_rules = {
-        "数据驾驶舱": "dashboard",
-        "看板": "kanban",
-        "时间线": "workflow_timeline",
-        "主从": "master_detail",
-        "树形": "tree_detail",
-    }
-    for module in planning["modules"]:
-        if module["name"] in instruction:
-            for phrase, pattern in pattern_rules.items():
-                if phrase in instruction:
-                    module["page_pattern"] = pattern
-                    changes.append(f"{module['name']}改为{phrase}")
-    if len(planning["modules"]) < 3:
-        raise ValueError("修改后至少需要保留 3 个功能模块")
-    return planning, "；".join(changes) or f"已记录修改意见：{instruction}"
+        second_text = _post_chat_completion(
+            [
+                {"role": "system", "content": repair_system},
+                {"role": "user", "content": repair_user},
+            ],
+            0.1,
+        )
+        payload = _extract_json(second_text)
+        if not isinstance(payload, dict) or "planning" not in payload:
+            raise ValueError("返工修复响应必须包含 planning 字段")
+        planning = Planning.model_validate(payload["planning"])
+        return RevisionResult(
+            planning=planning,
+            summary=str(payload.get("summary") or instruction),
+            model=model_name,
+        )

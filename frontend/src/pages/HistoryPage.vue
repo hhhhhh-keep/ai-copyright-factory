@@ -17,6 +17,7 @@ const statusText = {
   awaiting_demo_review: '等待 Demo 审查',
   revision_review: '等待确认修改',
   generating_materials: '生成材料中',
+  interrupted: '后台进程中断',
   success: '生成成功',
   failed: '生成失败'
 }
@@ -49,6 +50,24 @@ function openTask(job) {
     return
   }
   router.push({ path: '/', query: { jobId: job.job_id } })
+}
+
+async function resumeJob(job) {
+  if (!window.confirm(
+    `任务已中断。点击确定将从 ${job.recovery_from_step || 'project'} 步骤重新开始执行，\n` +
+    '可能重新执行项目生成、Maven 测试或材料生成。是否继续？'
+  )) return
+  actionJob.value = job.job_id
+  error.value = ''
+  try {
+    await request(`${API}/api/jobs/${job.job_id}/resume`, { method: 'POST' })
+    // 跳到首页轮询任务
+    router.push({ path: '/', query: { jobId: job.job_id } })
+  } catch (exception) {
+    error.value = `恢复任务失败：${exception.message}`
+  } finally {
+    actionJob.value = ''
+  }
 }
 
 async function startDemo(job) {
@@ -134,6 +153,11 @@ onMounted(loadJobs)
           </div>
           <div class="history-actions">
             <button @click="openTask(job)">查看任务</button>
+            <button
+              v-if="job.status === 'interrupted'"
+              :disabled="actionJob === job.job_id"
+              @click="resumeJob(job)"
+            >{{actionJob === job.job_id ? '恢复中…' : '恢复任务'}}</button>
             <a v-if="job.run_status === 'running'" :href="job.demo_url" target="_blank">查看 Demo</a>
             <span v-else-if="job.run_status === 'failed'" class="history-status-failed">启动失败</span>
             <button

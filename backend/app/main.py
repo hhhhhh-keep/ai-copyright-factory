@@ -30,7 +30,9 @@ from .workflow import (
     get_job,
     run_job,
     reset_job_for_revision,
+    resume_job,
     save_planning_version,
+    scan_for_interrupted_jobs,
     start_online_demo,
     stop_online_demo,
 )
@@ -43,7 +45,6 @@ class JobRequest(BaseModel):
     industry_type: Literal[
         "public_security", "justice", "industry", "education"
     ]
-    planner_mode: Literal["auto", "template", "llm"] = "auto"
     codegen_mode: Literal["auto", "template", "llm"] = "auto"
     document_template: Literal["standard", "compact", "formal"] = "standard"
     version: str = Field(default="V1.0", min_length=1, max_length=30)
@@ -136,6 +137,24 @@ app.add_middleware(
 )
 
 
+@app.on_event("startup")
+def _scan_interrupted_on_startup() -> None:
+    """服务启动时扫描 outputs/*/status.json，标记中断任务为 interrupted。
+
+    已知风险（L1 接受）：不解决多 uvicorn 并存 / 杀子进程 hang API /
+    改 multiprocessing 调度。
+    """
+    try:
+        marked = scan_for_interrupted_jobs()
+        if marked:
+            print(
+                f"[startup] 扫描到 {len(marked)} 个中断任务: {marked}",
+                flush=True,
+            )
+    except Exception as exc:
+        print(f"[startup] 扫描中断任务失败: {exc}", flush=True)
+
+
 @app.get("/api/health")
 def health() -> Dict[str, str]:
     return {"status": "ok"}
@@ -220,18 +239,52 @@ def regenerate_planning(payload: RegeneratePlanningRequest) -> Dict[str, Any]:
     job = get_job(payload.job_id)
     if not job:
         raise HTTPException(status_code=404, detail="任务不存在")
-    if job["status"] != "draft_planning":
-        raise HTTPException(status_code=409, detail="仅草稿规划允许重新生成")
+    # 允许的两种情况：草稿规划 或 规划阶段失败
+    planning_failure = False
+    if job["status"] == "draft_planning":
+        planning_failure = False
+    elif job["status"] == "failed":
+        failed_step = next(
+            (item for item in job.get("steps", []) if item.get("status") == "failed"),
+            None,
+        )
+        if failed_step and failed_step.get("key") == "planning":
+            planning_failure = True
+        else:
+            raise HTTPException(
+                status_code=409,
+                detail="仅规划阶段失败的任务允许重新生成规划",
+            )
+    else:
+        raise HTTPException(
+            status_code=409, detail="当前状态不允许重新生成规划"
+        )
+    # 复位规划步骤、清错误、保留用户最初输入
     steps = job["steps"]
     for item in steps:
-        item["status"] = "pending"
+        if item["key"] == "planning":
+            item["status"] = "pending"
+    job_dir = OUTPUT_ROOT / payload.job_id
+    stale_files = (
+        "planning.json",
+        "planning_versions",
+        "revision_proposals",
+    )
+    for name in stale_files:
+        path = job_dir / name
+        if path.is_dir():
+            shutil.rmtree(path)
+        elif path.exists():
+            path.unlink()
     _update(
         payload.job_id,
         status="generating",
         progress=0,
         current_step="重新生成软件规划",
         steps=steps,
+        planner_model=None,
         error=None,
+        failed_stage=None,
     )
     Process(
         target=generate_planning_draft,
@@ -268,6 +321,25 @@ def confirm_job(job_id: str) -> Dict[str, Any]:
         daemon=True,
     ).start()
     return confirmed
+
+
+@app.post("/api/jobs/{job_id}/resume", status_code=202)
+def resume_job_endpoint(job_id: str) -> Dict[str, Any]:
+    """ISSUE-008 L1：恢复被标记为 interrupted 的任务。
+
+    resume_job 内部会拒绝：
+    - 不存在的任务（LookupError → 404）
+    - 状态非 interrupted（success / failed / draft_planning / awaiting_demo_review 等，ValueError → 409）
+    - 已有活跃 Worker 锁（RuntimeError → 409）
+    """
+    try:
+        return resume_job(job_id)
+    except LookupError as exc:
+        raise HTTPException(status_code=404, detail=str(exc))
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc))
+    except RuntimeError as exc:
+        raise HTTPException(status_code=409, detail=str(exc))
 
 
 @app.get("/api/jobs/{job_id}")
@@ -399,9 +471,7 @@ def revision_propose(job_id: str, payload: RevisionRequest) -> Dict[str, Any]:
     proposal = {
         "instruction": payload.instruction,
         "summary": result.summary,
-        "actual_mode": result.actual_mode,
         "model": result.model,
-        "fallback_reason": result.fallback_reason,
         "planning": result.planning.model_dump(),
         "created_at": datetime.now().isoformat(timespec="seconds"),
     }

@@ -10,7 +10,6 @@ const form = ref({
   description: '用于涉案车辆档案、案件关联、车辆布控预警和统计研判',
   software_type: '管理系统',
   industry_type: 'public_security',
-  planner_mode: 'auto',
   codegen_mode: 'auto',
   document_template: 'standard',
   version: 'V1.0',
@@ -35,7 +34,6 @@ const revisionProposal = ref(null)
 const revisionLoading = ref(false)
 const revisionHistory = ref([])
 const plannerSettings = ref({
-  mode: 'auto',
   base_url: 'https://api.openai.com/v1',
   api_key: '',
   model: '',
@@ -237,6 +235,68 @@ async function restoreRevision(version) {
   }
 }
 
+const planningRetryLoading = ref(false)
+
+async function retryPlanning() {
+  if (!job.value?.job_id) return
+  planningRetryLoading.value = true
+  requestError.value = ''
+  try {
+    const response = await fetchWithTimeout(`${API}/api/planning/regenerate`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ job_id: job.value.job_id })
+    }, 30000)
+    if (!response.ok) {
+      const detail = (await response.json().catch(() => null))?.detail || await response.text()
+      throw new Error(detail)
+    }
+    job.value = await response.json()
+    poll()
+  } catch (error) {
+    requestError.value = `重新生成规划失败：${error.message}`
+  } finally {
+    planningRetryLoading.value = false
+  }
+}
+
+const resumeLoading = ref(false)
+
+async function resumeJob() {
+  if (!job.value?.job_id) return
+  if (!window.confirm(
+    `任务可能已中断。点击确定将从 ${job.value.recovery_from_step || 'project'} 步骤重新开始执行，\n` +
+    '可能重新执行项目生成、Maven 测试或材料生成。是否继续？'
+  )) return
+  resumeLoading.value = true
+  requestError.value = ''
+  try {
+    const response = await fetchWithTimeout(`${API}/api/jobs/${job.value.job_id}/resume`, {
+      method: 'POST'
+    }, 30000)
+    if (!response.ok) {
+      const detail = (await response.json().catch(() => null))?.detail || await response.text()
+      throw new Error(detail)
+    }
+    job.value = await response.json()
+    poll()
+  } catch (error) {
+    requestError.value = `恢复任务失败：${error.message}`
+  } finally {
+    resumeLoading.value = false
+  }
+}
+
+const canRetryPlanning = computed(() =>
+  job.value?.status === 'failed' &&
+  (job.value?.failed_stage === 'planning' || job.value?.failed_stage === null) &&
+  (job.value?.steps || []).some(s => s.key === 'planning' && s.status === 'failed')
+)
+
+const canResumeJob = computed(() =>
+  job.value?.status === 'interrupted'
+)
+
 async function startDemo() {
   if (!job.value) return
   demoActionLoading.value = true
@@ -315,7 +375,6 @@ async function loadPlannerSettings() {
       api_key: '',
       clear_api_key: false
     }
-    form.value.planner_mode = data.mode || 'auto'
   } catch (error) {
     settingsError.value = `读取模型配置失败：${error.message}`
   }
@@ -339,7 +398,6 @@ async function savePlannerSettings() {
       api_key: '',
       clear_api_key: false
     }
-    form.value.planner_mode = data.mode
     settingsMessage.value = '模型配置已保存到本机 backend\\.env。'
   } catch (error) {
     settingsError.value = `保存失败：${error.message}`
@@ -375,7 +433,6 @@ onBeforeUnmount(() => clearInterval(timer))
       <section v-if="settingsOpen" class="card settings-card">
         <div class="card-title"><i>AI</i><div><h2>Planner 模型认证</h2><p>配置保存在本机，不会写入生成材料</p></div></div>
         <div class="settings-grid">
-          <div><label>默认模式</label><select v-model="plannerSettings.mode"><option value="auto">自动回退</option><option value="llm">仅 LLM</option><option value="template">固定模板</option></select></div>
           <div><label>请求超时（秒）</label><input v-model.number="plannerSettings.timeout" type="number" min="5" max="300"></div>
           <div class="wide"><label>API Base URL</label><input v-model="plannerSettings.base_url" placeholder="https://api.openai.com/v1"></div>
           <div><label>模型名称</label><input v-model="plannerSettings.model" placeholder="填写接口实际支持的模型名"></div>
@@ -405,12 +462,6 @@ onBeforeUnmount(() => clearInterval(timer))
             <option value="industry">工业</option>
             <option value="education">教育</option>
           </select>
-          <label>规划模式</label>
-          <select v-model="form.planner_mode">
-            <option value="auto">自动（优先 LLM，失败回退模板）</option>
-            <option value="llm">仅 LLM（失败则终止）</option>
-            <option value="template">固定模板</option>
-          </select>
           <label>代码生成模式</label>
           <select v-model="form.codegen_mode">
             <option value="auto">AI 增强（失败自动回滚模板）</option>
@@ -439,9 +490,8 @@ onBeforeUnmount(() => clearInterval(timer))
 
         <section class="card progress-card">
           <div class="card-title"><i>02</i><div><h2>生成进度</h2><p>{{ job ? job.current_step : '等待创建任务' }}</p></div><strong v-if="job">{{job.progress}}%</strong></div>
-          <div class="planner-info" v-if="job?.planner_mode">
-            Planner：{{job.planner_mode === 'llm' ? `LLM · ${job.planner_model || '处理中'}` : job.planner_mode}}
-            <span v-if="job.planner_fallback_reason">（已回退模板）</span>
+          <div class="planner-info" v-if="job?.planner_model">
+            Planner：LLM · {{ job.planner_model }}
           </div>
           <div class="planner-info" v-if="job?.codegen_mode">
             Code Enhancer：{{job.codegen_actual_mode || job.codegen_mode}}
@@ -462,6 +512,21 @@ onBeforeUnmount(() => clearInterval(timer))
             </div>
           </div>
           <div class="error" v-if="job?.error">{{job.error}}</div>
+          <div v-if="canRetryPlanning" class="planning-retry">
+            <p>规划阶段已失败，可使用原任务 ID 重新生成规划（不会创建新任务）。</p>
+            <button :disabled="planningRetryLoading" @click="retryPlanning">
+              {{ planningRetryLoading ? '正在重新生成规划...' : '重新生成规划' }}
+            </button>
+          </div>
+          <div v-if="canResumeJob" class="resume-panel">
+            <h3>任务可能已中断</h3>
+            <p v-if="job.interrupted_reason">{{ job.interrupted_reason }}</p>
+            <p>恢复将从 <b>{{ job.recovery_from_step || 'project' }}</b> 步骤重新开始，
+              当前已恢复 <b>{{ job.resume_count || 0 }}</b> 次。</p>
+            <button :disabled="resumeLoading" @click="resumeJob">
+              {{ resumeLoading ? '正在恢复任务...' : '恢复任务' }}
+            </button>
+          </div>
           <div class="demo-panel" v-if="job && ['starting', 'running', 'stopped', 'verified', 'structure_verified', 'failed'].includes(job.run_status)">
             <div class="demo-header">
               <div><b>在线 Demo</b>

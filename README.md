@@ -2,12 +2,14 @@
 
 AI软著工厂用于从软件名称、行业、软件类型和描述出发，生成可运行的 Java Demo 项目及软件著作权申报材料。
 
-系统会先检索行业知识库，再由 Planner 生成结构化规划。用户确认规划后，系统生成并运行项目，启动在线 Demo 等待人工审查。只有用户确认 Demo 符合预期后，系统才会继续截图、文档、合规检查和 ZIP 打包。
+Planner 完全由大模型驱动，直接根据软件名称、软件类型和软件描述生成结构化规划。行业类型（公安、政法、工业、教育）仅作为任务信息记录，不约束 LLM 输出。首次 JSON 解析或 Pydantic 校验失败时自动修复一次；二次仍失败任务进入 `failed`，由用户在前端点击"重新生成规划"使用原 job ID 重试。用户确认规划后，系统生成并运行项目，启动在线 Demo 等待人工审查。只有用户确认 Demo 符合预期后，系统才会继续截图、文档、合规检查和 ZIP 打包。
 
 ## 当前能力
 
-- 支持公安、政法、工业、教育四类行业知识库。
-- 根据行业、软件类型、名称和描述自动生成相关业务模块。
+- Planner 由 LLM 直接生成；行业作为普通提示信息；不读取行业知识库，不做行业白名单或一致性校验。
+- 内部编码（`public_security` 等）通过 `planner.industry_name_for()` 转为显示名（"公安" 等）后传给模型。
+- 首次返回坏 JSON / 结构校验失败时自动修复一次；二次仍失败任务停留在 `failed`，由用户重试。
+- 返工对话 `propose_revision()` 同样 LLM-only，失败时提示重试。
 - 在 Planning Review 中增删改模块、页面、字段、数据库表和 UI 结构。
 - 生成 Java 17、Spring Boot 3、MyBatis Plus、MySQL、Vue 3、Element Plus 项目。
 - 每个业务模块生成 Entity、DTO、VO、Mapper、Service、ServiceImpl、Controller、API、Vue 页面和 SQL 表。
@@ -22,9 +24,8 @@ AI软著工厂用于从软件名称、行业、软件类型和描述出发，生
 ## 核心流程
 
 ```text
-填写软件信息
-→ 检索行业知识库
-→ AI 生成 planning.json
+填写软件信息（行业仅作信息记录）
+→ Planner 直接调用 LLM 生成 planning.json
 → Planning Review 人工调整并确认
 → 生成 Spring Boot + Vue 3 项目
 → 前端构建与 Maven 测试
@@ -108,7 +109,6 @@ Copy-Item "C:\Users\whn\Documents\软著\backend\.env.example" `
 填写 OpenAI-compatible API：
 
 ```env
-AI_PLANNER_MODE=auto
 AI_PLANNER_BASE_URL=https://api.openai.com/v1
 AI_PLANNER_API_KEY=你的密钥
 AI_PLANNER_MODEL=实际可用的模型名称
@@ -118,11 +118,11 @@ AI_CODEGEN_MODEL=
 AI_CODEGEN_TIMEOUT=90
 ```
 
-Planner 模式：
+Planner 运行方式：
 
-- `auto`：优先使用 LLM，调用失败时回退内置模板。
-- `llm`：只使用 LLM，调用或结构校验失败则终止。
-- `template`：只使用内置行业模板。
+- 当前代码为 LLM-only，不再支持 `auto`、`llm` 和 `template` 模式切换。
+- Planner 不读取行业知识库，不做行业白名单校验，不回退固定模板。
+- JSON 容错解析失败或结构校验失败时，携带错误让模型自动修复一次；仍失败则任务进入 `failed`，用户可在原任务上重新生成规划。
 
 代码生成模式：
 

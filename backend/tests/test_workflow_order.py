@@ -1,7 +1,10 @@
 import unittest
+from pathlib import Path
+from tempfile import TemporaryDirectory
+from types import SimpleNamespace
 from unittest.mock import patch
 
-from app.workflow import STEPS, run_job
+from app.workflow import STEPS, run_generated_project, run_job
 
 
 class WorkflowOrderTests(unittest.TestCase):
@@ -40,6 +43,46 @@ class WorkflowOrderTests(unittest.TestCase):
         ]
         self.assertIn("awaiting_demo_review", status_updates)
         start_demo.assert_called_once()
+
+    @patch("app.workflow._json_write")
+    @patch("app.workflow._maven_subprocess_env")
+    @patch("app.workflow._maven_command", return_value="mvn.cmd")
+    @patch("app.workflow.subprocess.run")
+    def test_maven_validation_uses_java17_environment(
+        self,
+        run,
+        _maven_command,
+        maven_env,
+        _json_write,
+    ):
+        run.return_value = SimpleNamespace(returncode=0, stdout="", stderr="")
+        expected_env = {"JAVA_HOME": r"D:\Program Files\Java\jdk-17"}
+        maven_env.return_value = expected_env
+
+        with TemporaryDirectory() as tmp:
+            job_dir = Path(tmp)
+            frontend = job_dir / "generated_project" / "frontend"
+            backend = job_dir / "generated_project" / "backend"
+            (backend / "src/main/java/example").mkdir(parents=True)
+            (backend / "src/main/resources").mkdir(parents=True)
+            (job_dir / "generated_project" / "sql").mkdir(parents=True)
+            frontend.mkdir(parents=True)
+            (backend / "pom.xml").write_text("<project/>", encoding="utf-8")
+            (backend / "src/main/resources/application.yml").write_text(
+                "spring: {}", encoding="utf-8"
+            )
+            (backend / "src/main/java/example/App.java").write_text(
+                "class App {}", encoding="utf-8"
+            )
+            (job_dir / "generated_project" / "sql/init.sql").write_text(
+                "", encoding="utf-8"
+            )
+
+            run_generated_project(job_dir)
+
+        maven_call = run.call_args_list[2]
+        self.assertEqual(maven_call.args[0], ["mvn.cmd", "test"])
+        self.assertIs(maven_call.kwargs["env"], expected_env)
 
 
 if __name__ == "__main__":

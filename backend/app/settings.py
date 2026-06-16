@@ -1,7 +1,7 @@
 import os
 import threading
 from pathlib import Path
-from typing import Dict, Literal, Optional
+from typing import Dict, Optional
 
 from dotenv import dotenv_values
 from pydantic import BaseModel, Field, HttpUrl
@@ -10,7 +10,6 @@ from pydantic import BaseModel, Field, HttpUrl
 ENV_PATH = Path(__file__).resolve().parents[1] / ".env"
 SETTINGS_LOCK = threading.Lock()
 SETTING_KEYS = (
-    "AI_PLANNER_MODE",
     "AI_PLANNER_BASE_URL",
     "AI_PLANNER_API_KEY",
     "AI_PLANNER_MODEL",
@@ -21,7 +20,6 @@ SETTING_KEYS = (
 
 
 class PlannerSettingsUpdate(BaseModel):
-    mode: Literal["auto", "llm", "template"] = "auto"
     base_url: HttpUrl
     api_key: Optional[str] = Field(default=None, max_length=500)
     model: str = Field(default="", max_length=100)
@@ -47,7 +45,6 @@ def public_planner_settings() -> Dict[str, object]:
     values = _current_values()
     api_key = values["AI_PLANNER_API_KEY"].strip()
     return {
-        "mode": values["AI_PLANNER_MODE"] or "auto",
         "base_url": values["AI_PLANNER_BASE_URL"] or "https://api.openai.com/v1",
         "model": values["AI_PLANNER_MODEL"],
         "timeout": int(values["AI_PLANNER_TIMEOUT"] or "60"),
@@ -71,7 +68,6 @@ def save_planner_settings(payload: PlannerSettingsUpdate) -> Dict[str, object]:
             api_key = payload.api_key.strip()
 
         updates = {
-            "AI_PLANNER_MODE": payload.mode,
             "AI_PLANNER_BASE_URL": str(payload.base_url).rstrip("/"),
             "AI_PLANNER_API_KEY": api_key,
             "AI_PLANNER_MODEL": payload.model.strip(),

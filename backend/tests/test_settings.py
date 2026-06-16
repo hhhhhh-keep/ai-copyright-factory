@@ -16,7 +16,6 @@ class PlannerSettingsTests(unittest.TestCase):
                 with patch.dict(os.environ, {}, clear=True):
                     result = settings.save_planner_settings(
                         PlannerSettingsUpdate(
-                            mode="llm",
                             base_url="https://example.com/v1",
                             api_key="secret-key-1234",
                             model="example-model",
@@ -27,10 +26,14 @@ class PlannerSettingsTests(unittest.TestCase):
 
             text = env_path.read_text(encoding="utf-8")
             self.assertIn("AI_PLANNER_API_KEY=secret-key-1234", text)
+            # AI_PLANNER_MODE 不应再写入 .env（"MODE" 是 "MODEL" 的子串，单独检查）
+            import re
+            self.assertIsNone(re.search(r"^AI_PLANNER_MODE=", text, re.MULTILINE))
             self.assertNotIn("secret-key-1234", str(result))
             self.assertNotIn("secret-key-1234", str(public))
             self.assertEqual(public["api_key_hint"], "***1234")
             self.assertTrue(public["api_key_configured"])
+            self.assertNotIn("mode", public)
 
     def test_blank_key_preserves_existing_key(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -40,7 +43,6 @@ class PlannerSettingsTests(unittest.TestCase):
                 with patch.dict(os.environ, {}, clear=True):
                     settings.save_planner_settings(
                         PlannerSettingsUpdate(
-                            mode="auto",
                             base_url="https://example.com/v1",
                             api_key="",
                             model="example-model",

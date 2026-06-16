@@ -10,6 +10,7 @@ import time
 import uuid
 import zipfile
 from datetime import datetime, timedelta
+from multiprocessing import Process
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional, Tuple
 
@@ -29,6 +30,25 @@ BASE_DIR = Path(__file__).resolve().parents[2]
 OUTPUT_ROOT = BASE_DIR / "outputs"
 OUTPUT_ROOT.mkdir(parents=True, exist_ok=True)
 _LOCK = threading.Lock()
+
+# ISSUE-008 L1 状态与超时阈值：超过这个时间且进程不存在/锁文件陈旧
+# 的任务会被启动扫描标记为 interrupted。
+INTERRUPTED_STATUS = "interrupted"
+EXECUTING_STATUSES = {
+    "generating",
+    "regenerating_project",
+    "generating_materials",
+    "confirmed",
+    "awaiting_demo_review",
+}
+# 不同状态下"updated_at" 超过这个秒数即视为陈旧
+INTERRUPT_AGE_SECONDS = {
+    "confirmed": 600,  # 10 分钟，规划已确认但项目目录还没建
+    "generating": 1800,  # 30 分钟，生成项目阶段
+    "regenerating_project": 1800,
+    "generating_materials": 3600,  # 60 分钟，材料阶段
+}
+# awaiting_demo_review 不自动标 interrupted（可能用户长时间不操作）
 
 STEPS = [
     ("planning", "生成软件规划"),
@@ -87,6 +107,298 @@ def _status_path(job_id: str) -> Path:
     return OUTPUT_ROOT / job_id / "status.json"
 
 
+# ----------------- ISSUE-008 L1：worker 锁与中断检测 -----------------
+
+
+def _worker_lock_path(job_id: str) -> Path:
+    return OUTPUT_ROOT / job_id / "worker.lock"
+
+
+def _pid_alive(pid: Optional[int]) -> bool:
+    """检查 PID 是否仍存在。Windows 上 os.kill(pid, 0) 抛 OSError 即死亡。"""
+    if not pid or pid <= 0:
+        return False
+    try:
+        os.kill(pid, 0)
+        return True
+    except (OSError, ProcessLookupError):
+        return False
+
+
+def _acquire_worker_lock(job_id: str, task_name: str) -> Dict[str, Any]:
+    """把当前 Worker 写入 outputs/{job_id}/worker.lock。
+
+    返回 lock 字典（含 pid、started_at、task）。如果 lock 已存在且 PID 仍存活，
+    抛 RuntimeError，让调用方拒绝重复启动。
+    """
+    job_dir = OUTPUT_ROOT / job_id
+    job_dir.mkdir(parents=True, exist_ok=True)
+    lock_path = _worker_lock_path(job_id)
+    if lock_path.exists():
+        try:
+            existing = _json_read(lock_path)
+        except (OSError, ValueError):
+            existing = {}
+        existing_pid = existing.get("pid")
+        if _pid_alive(existing_pid):
+            raise RuntimeError(
+                f"任务 {job_id} 已有活跃 Worker (PID {existing_pid})，拒绝重复启动"
+            )
+    lock = {
+        "pid": os.getpid(),
+        "ppid": os.getppid(),
+        "task": task_name,
+        "started_at": _now(),
+    }
+    _json_write(lock_path, lock)
+    return lock
+
+
+def _release_worker_lock(job_id: str) -> None:
+    """删除 worker.lock。"""
+    lock_path = _worker_lock_path(job_id)
+    if lock_path.exists():
+        try:
+            lock_path.unlink()
+        except OSError:
+            pass
+
+
+def _is_job_orphaned(status: Dict[str, Any]) -> bool:
+    """根据 lock 文件和 updated_at 判断任务是否需要标 interrupted。"""
+    job_id = status.get("job_id")
+    if not job_id:
+        return False
+    if status.get("status") not in EXECUTING_STATUSES:
+        return False
+    # success / failed / interrupted / draft_planning 直接跳过
+    if status.get("status") in {"success", "failed", INTERRUPTED_STATUS, "draft_planning"}:
+        return False
+    # awaiting_demo_review：长时间没动可能用户没操作，但应给机会先看 UI
+    # 暂时保守：awaiting_demo_review 不自动 interrupted（用户可手动恢复）
+    if status.get("status") == "awaiting_demo_review":
+        return False
+    # 优先级 1：worker.lock 是否存在
+    # - 活锁：Worker 仍在跑，即使 updated_at 旧也不能算孤儿（避免长任务被误杀）
+    # - 死锁：Worker 已退出，视为孤儿
+    # - 坏锁：lock JSON 解析失败，视为孤儿
+    lock_path = _worker_lock_path(job_id)
+    if lock_path.exists():
+        try:
+            lock = _json_read(lock_path)
+        except (OSError, ValueError):
+            return True
+        if not _pid_alive(lock.get("pid")):
+            return True
+        return False
+    # 优先级 2：无锁 + updated_at 超时 → 视为孤儿
+    # （任务曾经启动过 worker，但 worker 没写 lock 就崩溃了，靠 updated_at 兜底）
+    updated_at = status.get("updated_at")
+    if updated_at:
+        try:
+            last = datetime.fromisoformat(updated_at)
+            age = (datetime.now() - last).total_seconds()
+            threshold = INTERRUPT_AGE_SECONDS.get(status["status"], 1800)
+            if age >= threshold:
+                return True
+        except ValueError:
+            pass
+    return False
+
+
+def scan_for_interrupted_jobs() -> List[str]:
+    """扫描 outputs/*/status.json，对疑似失联的任务标记 interrupted。
+
+    返回被标记的 job_id 列表。服务启动时调用一次。
+    """
+    marked: List[str] = []
+    if not OUTPUT_ROOT.exists():
+        return marked
+    for status_path in OUTPUT_ROOT.glob("*/status.json"):
+        try:
+            status = _json_read(status_path)
+        except (OSError, ValueError):
+            continue
+        job_id = status.get("job_id")
+        if not job_id:
+            continue
+        if not _is_job_orphaned(status):
+            continue
+        try:
+            # 标记前先停掉任何残留 Demo
+            try:
+                stop_online_demo(job_id)
+            except Exception:
+                pass
+            steps = status.get("steps", [])
+            for item in steps:
+                if item.get("status") == "running":
+                    item["status"] = "failed"
+            _update(
+                job_id,
+                status=INTERRUPTED_STATUS,
+                steps=steps,
+                current_step="后台进程中断，等待用户恢复",
+                failed_stage=status.get("status"),
+                interrupted_at=_now(),
+                interrupted_reason=(
+                    "updated_at 超过阈值或 worker 锁进程已退出，"
+                    "请在历史任务页点击'恢复任务'继续。"
+                ),
+                error=None,
+            )
+            _release_worker_lock(job_id)
+            marked.append(job_id)
+        except Exception:
+            # 单个任务标记失败不影响其它任务
+            continue
+    return marked
+
+
+def _has_active_worker_lock(job_id: str) -> bool:
+    """只读检查：lock 文件存在且 PID 仍存活。
+
+    与 `_acquire_worker_lock` 不同，这里不抢锁，只用于 resume 前防双跑。
+    """
+    lock_path = _worker_lock_path(job_id)
+    if not lock_path.exists():
+        return False
+    try:
+        lock = _json_read(lock_path)
+    except (OSError, ValueError):
+        return False
+    return _pid_alive(lock.get("pid"))
+
+
+def resume_job(job_id: str) -> Dict[str, Any]:
+    """根据任务当前阶段选择恢复点，启动新 Worker。
+
+    恢复策略（与 ISSUE-008 文档表一致）：
+    - confirmed：项目目录不存在 → 从 project 开始
+    - project/enhance：清掉 generated_project/ 后从 project 开始
+    - run：从 run 重新执行
+    - demo：清掉残留进程后从 demo 重新启动
+    - generating_materials：清掉 screenshots/ docs/ copyright_package.zip 等，从 materials 整体重做
+    - 其余状态（含 success / draft_planning / failed / awaiting_demo_review）：
+      抛 ValueError，由 main.py 转为 409
+    - 防双跑：若 lock 文件中 PID 仍存活则拒绝，避免重复点击启动两个生成进程。
+
+    返回 dict：被恢复任务的最新 status。
+    """
+    status = get_job(job_id)
+    if not status:
+        raise LookupError("任务不存在")
+    current = status.get("status")
+    if current == "success":
+        raise ValueError("任务已完成，无需恢复")
+    if current == "draft_planning":
+        raise ValueError("规划未确认，无需恢复")
+    if current == "awaiting_demo_review":
+        raise ValueError("任务正在等待用户审查 Demo，无需恢复")
+    if current != INTERRUPTED_STATUS:
+        raise ValueError(f"当前状态 {current} 不可恢复，请先中断或失败后重试")
+
+    # 防双跑：先释放陈旧 lock（PID 已死），再检查是否还有活锁
+    lock_path = _worker_lock_path(job_id)
+    if lock_path.exists():
+        try:
+            existing = _json_read(lock_path)
+        except (OSError, ValueError):
+            existing = {}
+        if not _pid_alive(existing.get("pid")):
+            _release_worker_lock(job_id)
+    if _has_active_worker_lock(job_id):
+        raise RuntimeError("已有活跃 Worker 在执行该任务，请稍候再试")
+
+    job_dir = OUTPUT_ROOT / job_id
+    # 清理可能残留的运行中 step
+    steps = status.get("steps", [])
+    for item in steps:
+        if item["key"] == "planning":
+            item["status"] = "completed"
+        elif item["status"] == "running":
+            item["status"] = "failed"
+
+    # 根据中断前的状态选择恢复点
+    prev_status = status.get("failed_stage") or current
+    target = "project"  # 默认从 project 开始
+    if prev_status in {"generating_materials", "materials"}:
+        # 材料阶段：内部 target 落到第一个材料步骤 screenshot，
+        # 避免 STEPS 中没有"materials"导致从 planning 全部重置
+        target = "screenshot"
+        for name in (
+            "screenshots",
+            "docs",
+            "logs",
+            "copyright_package.zip",
+            "generated_project.zip",
+        ):
+            path = job_dir / name
+            if path.is_dir():
+                shutil.rmtree(path)
+            elif path.exists():
+                path.unlink()
+    elif prev_status == "confirmed":
+        target = "project"
+    elif prev_status in {"project", "enhance"}:
+        target = "project"
+        gen_dir = job_dir / "generated_project"
+        if gen_dir.exists():
+            shutil.rmtree(gen_dir)
+    elif prev_status == "run":
+        target = "run"
+    elif prev_status == "demo":
+        target = "demo"
+        try:
+            stop_online_demo(job_id)
+        except Exception:
+            pass
+
+    # 解析 target 在 STEPS 中的位置；若 target 不在 STEPS，target=project 时回退到 1 (project)
+    # materials 已在前面改写为 screenshot（STEPS 中存在），不会再走这里。
+    target_idx = next(
+        (i for i, s in enumerate(STEPS) if s[0] == target),
+        1 if target in {"project", "enhance"} else 0,
+    )
+
+    # 重置 target 之后（含）所有 step 状态为 pending
+    for i, (key, _name) in enumerate(STEPS):
+        if i >= target_idx:
+            for item in steps:
+                if item["key"] == key:
+                    item["status"] = "pending"
+
+    resume_count = int(status.get("resume_count", 0)) + 1
+    # 选择目标状态与 Worker：材料阶段直接进入 generating_materials，避免短暂写 regenerating_project
+    if target == "screenshot" or target == "materials":
+        new_status = "generating_materials"
+        target_fn = continue_material_generation
+    else:
+        new_status = "generating"
+        target_fn = run_job
+    _update(
+        job_id,
+        status=new_status,
+        current_step=f"恢复任务，从 {target} 重新开始",
+        steps=steps,
+        error=None,
+        failed_stage=None,
+        interrupted_at=None,
+        interrupted_reason=None,
+        recovery_from_step=target,
+        resume_count=resume_count,
+        resumed_at=_now(),
+    )
+
+    Process(
+        target=target_fn,
+        args=(job_id,),
+        name=f"resume-{target}-{job_id}",
+        daemon=True,
+    ).start()
+    return get_job(job_id)
+
+
 def create_job(payload: Dict[str, Any]) -> Dict[str, Any]:
     job_id = datetime.now().strftime("%Y%m%d%H%M%S") + "-" + uuid.uuid4().hex[:8]
     job_dir = OUTPUT_ROOT / job_id
@@ -98,10 +410,7 @@ def create_job(payload: Dict[str, Any]) -> Dict[str, Any]:
         "software_type": payload.get("software_type", "管理系统").strip(),
         "industry_type": payload["industry_type"],
         "clarification_answers": payload.get("clarification_answers", {}),
-        "planner_mode": payload.get("planner_mode", "auto"),
-        "planner_requested_mode": payload.get("planner_mode", "auto"),
         "planner_model": None,
-        "planner_fallback_reason": None,
         "codegen_mode": payload.get("codegen_mode", "auto"),
         "codegen_actual_mode": None,
         "codegen_model": None,
@@ -125,7 +434,17 @@ def create_job(payload: Dict[str, Any]) -> Dict[str, Any]:
         "progress": 0,
         "current_step": "生成软件规划",
         "steps": [{"key": key, "name": name, "status": "pending"} for key, name in STEPS],
+        "failed_stage": None,
         "error": None,
+        # ISSUE-008 L1：执行信息
+        "worker_pid": None,
+        "worker_started_at": None,
+        "worker_heartbeat_at": None,
+        "interrupted_at": None,
+        "interrupted_reason": None,
+        "resume_count": 0,
+        "recovery_from_step": None,
+        "resumed_at": None,
         "created_at": _now(),
         "updated_at": _now(),
     }
@@ -172,7 +491,21 @@ def generate_planning_draft(job_id: str) -> None:
         return
     job_dir = OUTPUT_ROOT / job_id
     try:
-        _update(job_id, status="generating", current_step="生成软件规划", error=None)
+        _acquire_worker_lock(job_id, "generate_planning_draft")
+    except RuntimeError:
+        # 已有活跃 Worker，跳过启动
+        return
+    try:
+        _update(
+            job_id,
+            status="generating",
+            current_step="生成软件规划",
+            error=None,
+            failed_stage=None,
+            worker_pid=os.getpid(),
+            worker_started_at=_now(),
+            worker_heartbeat_at=_now(),
+        )
         _step(job_id, "planning", "running")
         generate_planning(job, job_dir)
         _step(job_id, "planning", "completed")
@@ -181,6 +514,7 @@ def generate_planning_draft(job_id: str) -> None:
             status="draft_planning",
             progress=10,
             current_step="等待确认软件规划",
+            failed_stage=None,
         )
     except Exception as exc:
         status = get_job(job_id)
@@ -193,8 +527,11 @@ def generate_planning_draft(job_id: str) -> None:
                 status="failed",
                 steps=status["steps"],
                 current_step="规划生成失败",
+                failed_stage="planning",
                 error=f"{type(exc).__name__}: {exc}",
             )
+    finally:
+        _release_worker_lock(job_id)
 
 
 def run_job(job_id: str) -> None:
@@ -207,11 +544,25 @@ def run_job(job_id: str) -> None:
             job_id,
             status="failed",
             current_step="生成失败",
+            failed_stage="project",
             error="planning.json 不存在，禁止开始项目生成",
         )
         return
     try:
-        _update(job_id, status="generating", current_step="开始生成", error=None)
+        _acquire_worker_lock(job_id, "run_job")
+    except RuntimeError:
+        return
+    try:
+        _update(
+            job_id,
+            status="generating",
+            current_step="开始生成",
+            error=None,
+            failed_stage=None,
+            worker_pid=os.getpid(),
+            worker_started_at=_now(),
+            worker_heartbeat_at=_now(),
+        )
         tasks = [
             ("project", lambda: generate_project(job_dir)),
             ("enhance", lambda: enhance_generated_project(job, job_dir)),
@@ -240,8 +591,11 @@ def run_job(job_id: str) -> None:
                 status="failed",
                 steps=status["steps"],
                 current_step="生成失败",
+                failed_stage="project",
                 error=f"{type(exc).__name__}: {exc}",
             )
+    finally:
+        _release_worker_lock(job_id)
 
 
 def continue_material_generation(job_id: str) -> None:
@@ -250,11 +604,19 @@ def continue_material_generation(job_id: str) -> None:
         return
     job_dir = OUTPUT_ROOT / job_id
     try:
+        _acquire_worker_lock(job_id, "continue_material_generation")
+    except RuntimeError:
+        return
+    try:
         _update(
             job_id,
             status="generating_materials",
             current_step="Demo 审查通过，开始生成软著材料",
             error=None,
+            failed_stage=None,
+            worker_pid=os.getpid(),
+            worker_started_at=_now(),
+            worker_heartbeat_at=_now(),
         )
         tasks = [
             ("screenshot", lambda: capture_screenshots(job_dir)),
@@ -280,8 +642,11 @@ def continue_material_generation(job_id: str) -> None:
                 status="failed",
                 steps=status["steps"],
                 current_step="材料生成失败",
+                failed_stage="materials",
                 error=f"{type(exc).__name__}: {exc}",
             )
+    finally:
+        _release_worker_lock(job_id)
 
 
 def save_planning_version(
@@ -351,17 +716,12 @@ def generate_planning(job: Dict[str, Any], job_dir: Path) -> None:
     result = build_planning(job)
     planning = result.planning.model_dump()
     planning["planner"] = {
-        "requested_mode": result.requested_mode,
-        "actual_mode": result.actual_mode,
         "model": result.model,
-        "fallback_reason": result.fallback_reason,
     }
     _json_write(job_dir / "planning.json", planning)
     _update(
         job["job_id"],
-        planner_mode=result.actual_mode,
         planner_model=result.model,
-        planner_fallback_reason=result.fallback_reason,
     )
 
 
@@ -1013,6 +1373,7 @@ def run_generated_project(job_dir: Path) -> None:
         result = subprocess.run(
             command,
             cwd=str(backend),
+            env=_maven_subprocess_env(),
             capture_output=True,
             text=True,
             encoding="utf-8",
