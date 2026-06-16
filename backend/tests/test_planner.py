@@ -26,6 +26,7 @@ from app.planner import (
     propose_revision,
     _extract_json,
     _first_json_object,
+    _parse_and_validate,
 )
 
 
@@ -237,6 +238,34 @@ class PlanningSchemaTests(unittest.TestCase):
         validated = Planning.model_validate(planning)
 
         self.assertEqual(len(validated.modules[0].fields), 13)
+
+    def test_missing_database_tables_are_filled_from_modules(self):
+        planning = json.loads(json.dumps(VALID_PLANNING, ensure_ascii=False))
+        planning["database_tables"] = ["education_students"]
+
+        validated = _parse_and_validate(json.dumps(planning, ensure_ascii=False))
+
+        self.assertEqual(
+            validated.database_tables,
+            ["education_students", "teachers", "courses"],
+        )
+
+    def test_extra_invalid_duplicate_database_tables_are_normalized(self):
+        planning = json.loads(json.dumps(VALID_PLANNING, ensure_ascii=False))
+        planning["database_tables"] = [
+            "1 bad table",
+            "1 bad table",
+            "education_courses",
+            "extra_table",
+        ]
+
+        validated = _parse_and_validate(json.dumps(planning, ensure_ascii=False))
+
+        self.assertEqual(len(validated.database_tables), len(validated.modules))
+        self.assertEqual(len(set(validated.database_tables)), len(validated.modules))
+        self.assertEqual(validated.database_tables[0], "t_1_bad_table")
+        self.assertEqual(validated.database_tables[1], "t_1_bad_table_2")
+        self.assertEqual(validated.database_tables[2], "education_courses")
 
 
 class BuildPlanningTests(unittest.TestCase):

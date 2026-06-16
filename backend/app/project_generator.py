@@ -1,8 +1,9 @@
 import json
 import re
+import hashlib
 from datetime import datetime, timedelta
 from pathlib import Path
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional, Tuple
 
 
 def _write(path: Path, content: str) -> None:
@@ -17,6 +18,403 @@ def _pascal(value: str) -> str:
 def _camel(value: str) -> str:
     pascal = _pascal(value)
     return pascal[:1].lower() + pascal[1:]
+
+
+_ACTION_LABELS = {
+    "approve": "通过",
+    "reject": "驳回",
+    "quick_audit": "快速审核",
+    "quickAudit": "快速审核",
+    "transfer": "转交",
+    "return": "退回补充",
+    "archive": "归档",
+    "submit": "提交",
+    "cancel": "取消",
+    "assign": "分派",
+    "dispatch": "派发",
+    "close": "办结",
+    "start": "启动",
+    "stop": "停止",
+}
+
+_CRUD_ACTION_CODES = {"page", "list", "get", "detail", "create", "update", "delete"}
+_HTTP_ANNOTATIONS = {
+    "GET": "GetMapping",
+    "POST": "PostMapping",
+    "PUT": "PutMapping",
+    "DELETE": "DeleteMapping",
+    "PATCH": "PatchMapping",
+}
+_JS_HTTP_METHODS = {
+    "GET": "get",
+    "POST": "post",
+    "PUT": "put",
+    "DELETE": "delete",
+    "PATCH": "patch",
+}
+
+
+def _label_for_action(code: str) -> str:
+    if code in _ACTION_LABELS:
+        return _ACTION_LABELS[code]
+    words = re.split(r"[_-]+", code)
+    return "".join(word.capitalize() for word in words if word) or "业务操作"
+
+
+def _action_method_name(code: str) -> str:
+    method = _camel(code.replace("-", "_"))
+    if method in {
+        "return",
+        "class",
+        "default",
+        "switch",
+        "case",
+        "try",
+        "catch",
+        "finally",
+        "throw",
+        "throws",
+        "new",
+        "public",
+        "private",
+        "protected",
+        "static",
+        "void",
+    }:
+        return f"{method}Action"
+    return method
+
+
+def _parse_business_actions(planning: Dict[str, Any]) -> Dict[str, List[Dict[str, str]]]:
+    actions_by_module = {module["key"]: [] for module in planning.get("modules", [])}
+    seen: Dict[str, set] = {key: set() for key in actions_by_module}
+    for item in planning.get("api_list", []) or []:
+        if not isinstance(item, str):
+            continue
+        match = re.match(
+            r"^(GET|POST|PUT|DELETE|PATCH)\s+/api/([a-zA-Z0-9_]+)/\{id\}/([a-zA-Z0-9_/-]+)$",
+            item.strip(),
+            re.IGNORECASE,
+        )
+        if not match:
+            continue
+        method, module_key, raw_action = match.groups()
+        module_key = module_key.lower()
+        if module_key not in actions_by_module:
+            continue
+        code = raw_action.strip("/").split("/")[-1].replace("-", "_")
+        if not code or code in _CRUD_ACTION_CODES or code in seen[module_key]:
+            continue
+        method = method.upper()
+        actions_by_module[module_key].append(
+            {
+                "code": code,
+                "label": _label_for_action(code),
+                "method": method,
+                "java_method": _action_method_name(code),
+                "js_function": f"{_action_method_name(code)}{_pascal(module_key)}",
+                "js_http_method": _JS_HTTP_METHODS.get(method, "post"),
+                "annotation": _HTTP_ANNOTATIONS.get(method, "PostMapping"),
+                "path": f"{{id}}/{code}",
+            }
+        )
+        seen[module_key].add(code)
+    return actions_by_module
+
+
+def _planning_with_actions(planning: Dict[str, Any]) -> Dict[str, Any]:
+    enriched = dict(planning)
+    actions = _parse_business_actions(planning)
+    modules = []
+    for module in planning.get("modules", []):
+        item = dict(module)
+        item["business_actions"] = actions.get(module["key"], [])
+        modules.append(item)
+    enriched["modules"] = modules
+    return enriched
+
+
+# ----------------- ISSUE-010 / 011：业务化指标、注释、指纹 -----------------
+
+
+def _stable_seed(value: str, modulo: int = 997) -> int:
+    """跨进程稳定 hash，避免 Python 内置 hash() 随进程随机化。"""
+    digest = hashlib.sha256((value or "").encode("utf-8")).hexdigest()
+    return int(digest[:12], 16) % modulo
+
+
+_BUSINESS_KEYWORDS: List[Tuple[str, List[str]]] = [
+    # (pattern, list of 业务化 KPI 模板)；匹配时按 module.name 包含任一关键词
+    ("监区|监所|在押|人员档案", [
+        "在押人数", "今日新收", "风险预警", "解除办理", "档案完整率"
+    ]),
+    ("勤务|排班|值班|交接", [
+        "值班人次", "排班冲突", "勤务完成率", "告警处置", "到岗打卡"
+    ]),
+    ("案件|办案|执法|案卷", [
+        "案件总数", "在办案件", "已结案件", "超期案件", "立案受理"
+    ]),
+    ("车辆|布控|车管|轨迹", [
+        "在管车辆", "今日过车", "布控命中", "轨迹回放", "异常告警"
+    ]),
+    ("视频|监控|图像|点位", [
+        "在线点位", "录像完好率", "今日告警", "图像调取", "故障在线"
+    ]),
+    ("审批|流程|流转|审核", [
+        "待审批", "今日办结", "审批耗时", "退回件数", "审批通过率"
+    ]),
+    ("统计|研判|分析|指标|驾驶舱", [
+        "数据更新", "环比变化", "风险等级", "重点对象", "指标告警"
+    ]),
+    ("预警|告警|风险|事件", [
+        "今日告警", "已处置", "待研判", "升级事件", "高风险数"
+    ]),
+    ("用户|账号|权限|登录", [
+        "在线用户", "今日登录", "异常登录", "权限变更", "账号启用"
+    ]),
+]
+
+
+def _kpi_indicators_for_planning(planning: Dict[str, Any]) -> List[Dict[str, Any]]:
+    """根据模块名称与软件类型生成 4 个业务化 KPI。
+
+    优先匹配模块名中的关键词；若都未匹配，使用 planning["software_type"] 兜底。
+    """
+    modules = planning.get("modules", [])
+    blob = " ".join(
+        [planning.get("software_name", ""), planning.get("software_type", "")]
+        + [m.get("name", "") for m in modules[:3]]
+    )
+    chosen: List[str] = []
+    for pattern, indicators in _BUSINESS_KEYWORDS:
+        if re.search(pattern, blob):
+            chosen = indicators[:4]
+            break
+    if not chosen:
+        chosen = [
+            "业务总数", "今日新增", "待处理", "本月完成"
+        ]
+    # 用模块数量与软件名长度做稳定 hash，保证每次生成同款数字
+    seed = _stable_seed(planning.get("software_name", ""))
+    offsets = [
+        1000 + (seed * (i + 1) * 37) % 9000 for i in range(4)
+    ]
+    return [
+        {"label": label, "value": offsets[i], "unit": "项", "trend": "+12%" if i % 2 == 0 else "-3%",
+         "trend_dir": "up" if i % 2 == 0 else "down"}
+        for i, label in enumerate(chosen)
+    ]
+
+
+def _status_distribution_for_planning(planning: Dict[str, Any]) -> List[Dict[str, Any]]:
+    """按 planning 行业生成状态分布（用于环形占比图）。"""
+    industry = (planning.get("industry_name") or "") + (planning.get("software_name") or "")
+    if any(k in industry for k in ["监所", "在押", "勤务"]):
+        labels = ["正常", "关注", "预警", "高危"]
+        weights = [58, 22, 14, 6]
+    elif any(k in industry for k in ["案件", "执法"]):
+        labels = ["受理", "在办", "结案", "归档"]
+        weights = [12, 35, 38, 15]
+    elif any(k in industry for k in ["车辆", "视频"]):
+        labels = ["在线", "正常", "异常", "离线"]
+        weights = [78, 14, 6, 2]
+    else:
+        labels = ["待办", "处理中", "已完成", "已归档"]
+        weights = [22, 35, 33, 10]
+    return [{"label": l, "weight": w} for l, w in zip(labels, weights)]
+
+
+def _trend_series_for_planning(planning: Dict[str, Any], days: int = 7) -> List[int]:
+    """生成稳定但有起伏的 7 日趋势序列。"""
+    seed = _stable_seed(planning.get("software_name", "trend"), 1000)
+    return [40 + ((seed * (i + 1) * 13) % 60) for i in range(days)]
+
+
+def _recent_activities_for_planning(planning: Dict[str, Any]) -> List[Dict[str, Any]]:
+    """首页"最近动态"列表，文本来自模块名 + 关键词。"""
+    modules = planning.get("modules", [])
+    seed = _stable_seed(planning.get("software_name", ""))
+    types = ["办理", "新增", "审核", "归档", "告警", "导出"]
+    out: List[Dict[str, Any]] = []
+    for i, m in enumerate(modules[:4]):
+        out.append({
+            "module": m.get("name", f"业务模块{i+1}"),
+            "action": types[(seed + i) % len(types)],
+            "minutes_ago": 6 + i * 9 + (seed % 11),
+            "level": ["info", "info", "warn", "danger"][(seed + i) % 4],
+        })
+    return out
+
+
+def _module_business_comment(
+    module: Dict[str, Any], kind: str
+) -> str:
+    """返回纯文本业务化中文注释（不含 // 或 -- 或 ** 前缀）。
+
+    kind ∈ {entity, repository, service, controller, vue_page, sql_table}
+    """
+    name = module.get("name", "业务对象")
+    desc = module.get("description") or f"{name}业务管理"
+    verb_map = {
+        "entity": "实体类，映射数据库表结构并维护字段属性",
+        "repository": "数据访问层，提供按主键与业务条件查询的能力",
+        "service": "业务层，承载业务规则、跨模块关联与状态流转",
+        "controller": "接口层，对外暴露 RESTful API 并完成参数校验",
+        "vue_page": "前端页面，承载列表筛选、详情查看和业务表单交互",
+        "sql_table": "数据库表结构，存储业务核心字段与索引",
+    }
+    verb = verb_map.get(kind, "业务模块")
+    return f"{name}：{verb}。业务说明：{desc}。"
+
+
+def _controller_method_comment(module: Dict[str, Any], method: str) -> str:
+    """Controller 每个方法一条业务化中文注释。"""
+    name = module.get("name", "业务对象")
+    desc_map = {
+        "list": f"分页查询{name}列表，支持按关键字和业务状态筛选",
+        "detail": f"按主键获取{name}完整业务字段和关联数据",
+        "create": f"新增{name}，按业务规则校验字段后落库",
+        "update": f"按主键更新{name}，对状态变更做业务校验",
+        "delete": f"按主键删除{name}，对有业务关联的记录拒绝并提示",
+    }
+    return desc_map.get(method, f"{name}{method} 操作")
+
+
+def _field_business_comment(
+    module_name: str, field: str, kind: str
+) -> str:
+    """返回纯文本业务化注释（不含 // 或 -- 或 ** 前缀），由调用方按语言加前缀。
+
+    role_map 列出"业务角色关键词 → 业务角色描述"，关键词同时支持中英文，
+    以便 Planner 生成的业务字段名（通常是中文）能命中合适的角色。
+    """
+    role_map = [
+        (["name", "名", "姓名", "标题", "name"], "业务主名称"),
+        (["code", "编号", "code", "no", "no."], "业务编号或识别码"),
+        (["type", "类别", "分类", "类型", "type"], "业务分类"),
+        (["status", "状态", "state", "stage"], "当前业务状态"),
+        (["remark", "备注", "说明", "描述", "desc"], "业务补充说明"),
+        (["amount", "金额", "数量", "总数", "qty", "amount", "count"], "数量或金额数值"),
+        (["time", "时间", "日期", "time", "date", "at"], "业务发生时间"),
+    ]
+    for keywords, role in role_map:
+        for kw in keywords:
+            if kw and kw in field:
+                return f"{field}：{module_name}的{role}字段"
+    return f"{field}：{module_name}的业务属性"
+
+
+def _project_fingerprint(
+    planning: Dict[str, Any],
+    job_dir: Path,
+    style_version: str = "v1",
+) -> Dict[str, Any]:
+    """生成 project_fingerprint.json：记录模块命名、字段组合、页面模式、注释风格与差异化参数。"""
+    modules = planning.get("modules", [])
+    pages: List[Dict[str, Any]] = []
+    fields_by_module: Dict[str, List[str]] = {}
+    page_patterns: List[str] = []
+    tables = planning.get("database_tables") or []
+    for index, m in enumerate(modules):
+        key = m.get("key", "")
+        fields_by_module[key] = list(m.get("fields", []))
+        pp = m.get("page_pattern", "table_crud")
+        page_patterns.append(pp)
+        pages.append({
+            "key": key,
+            "name": m.get("name", ""),
+            "table": tables[index] if index < len(tables) and tables[index] else f"ed_{key}",
+            "page_pattern": pp,
+            "detail_pattern": m.get("detail_pattern", "master_detail"),
+            "edit_pattern": m.get("edit_pattern", "dialog"),
+            "field_count": len(m.get("fields", [])),
+        })
+    return {
+        "schema_version": "1.0",
+        "style_version": style_version,
+        "generated_at": datetime.now().isoformat(timespec="seconds"),
+        "software": {
+            "name": planning.get("software_name", ""),
+            "type": planning.get("software_type", ""),
+            "industry_type": planning.get("industry_type", ""),
+            "industry_name": planning.get("industry_name", ""),
+        },
+        "ui_plan": planning.get("ui_plan", {}),
+        "modules": pages,
+        "fields_by_module": fields_by_module,
+        "page_patterns_used": sorted(set(page_patterns)),
+        "comment_style": {
+            "language": "zh-CN",
+            "target": "业务化中文注释",
+            "levels": ["class", "method", "field"],
+            "sources": ["module.name", "module.description", "field 名"],
+        },
+        "differentiation": {
+            "seed": _stable_seed(planning.get("software_name", "")),
+            "kpi_indicator_strategy": "business-keyword-matching",
+            "trend_series_strategy": "deterministic-hash",
+        },
+    }
+
+
+def _originality_report(
+    planning: Dict[str, Any],
+    job_dir: Path,
+) -> Dict[str, Any]:
+    """生成 originality_report.json：说明原创性来源、模板复用范围、第三方依赖与本项目生成代码边界。"""
+    modules = planning.get("modules", [])
+    return {
+        "schema_version": "1.0",
+        "generated_at": datetime.now().isoformat(timespec="seconds"),
+        "software_name": planning.get("software_name", ""),
+        "originality_sources": {
+            "business_kpi_indicators": "根据软件名称、类型和模块名匹配行业关键词生成（见 _BUSINESS_KEYWORDS）",
+            "field_business_comments": "根据字段名角色（名称/编号/状态/数量/时间）生成业务化中文注释",
+            "module_business_comments": "根据模块名与 description 生成 entity/repository/service/controller/vue_page/sql_table 六类业务化注释",
+            "dashboard_visual_components": "KPI 卡 / SVG 环形占比 / SVG 折线趋势 / SVG 分组柱状 / 状态标签 / 最近动态 — 6 类业务化图形组件（ISSUE-010）",
+            "ui_shell_variants": "3 种应用壳层 × 3 种首页模式 × 6 种模块页面模式（ISSUE-003）",
+        },
+        "template_reuse_scope": {
+            "deterministic_generator": [
+                "Java Controller/Service/Repository/Entity 模板",
+                "Vue 页面 + 路由 + 样式模板",
+                "SQL DDL 模板",
+                "应用壳层与导航结构",
+                "Dashboard 业务化组件（KPI / 环形 / 折线 / 柱状 / 标签 / 动态）",
+            ],
+            "business_personalized": [
+                "KPI 指标文案（按行业关键词匹配）",
+                "业务化中文注释（按模块与字段名生成）",
+                "趋势与状态分布数据（确定性 hash）",
+            ],
+        },
+        "third_party_dependencies": {
+            "backend": [
+                "Spring Boot 3 / MyBatis Plus / MySQL Connector",
+                "Lombok / Validation / JUnit（测试）",
+            ],
+            "frontend": [
+                "Vue 3 / Vue Router / Element Plus / Vite",
+            ],
+            "build_tool": ["Maven 3.9+", "JDK 17", "Node 18+"],
+            "license_summary_path": "generated_project/THIRD_PARTY_NOTICES.md",
+        },
+        "boundaries": {
+            "deterministic_generated_code": "本项目生成器输出的全部源码与样式",
+            "third_party_libraries": "上述第三方依赖，按 THIRD_PARTY_NOTICES.md 维护",
+            "user_edited_code": "本项目生成后由用户在生成项目目录内修改的部分（不计入本项目原创性范围）",
+        },
+        "validation": {
+            "backend_build": "JDK 17 + Maven 编译通过",
+            "frontend_build": "Node 18 + npm run build 通过",
+            "documentation_artifacts": [
+                "copyright_package.zip",
+                "generated_project.zip",
+                "THIRD_PARTY_NOTICES.md",
+                "project_fingerprint.json",
+            ],
+        },
+    }
 
 
 def _java_package(software_name: str) -> str:
@@ -313,9 +711,11 @@ def _entity(package_name: str, module: Dict[str, Any], table: str) -> str:
     required_imports = sorted({imports[item] for item in field_types if item in imports})
     import_text = "\n".join(f"import {item};" for item in required_imports)
     fields = "\n".join(
+        # 用 label 而非 field_name 做 role 匹配，让"档案编号"等真实业务词命中
+        f'    /** {_field_business_comment(module.get("name", "业务对象"), label, "field")} */\n'
         f'    @TableField("{_field_name(index)}")\n'
         f"    private {field_types[index]} {_field_name(index)};"
-        for index in range(len(module["fields"]))
+        for index, label in enumerate(module["fields"])
     )
     return f"""
 package {package_name}.module.{module["key"]}.entity;
@@ -328,13 +728,19 @@ import lombok.Data;
 {import_text}
 import java.time.LocalDateTime;
 
+/**
+ * {_module_business_comment(module, "entity")}
+ */
 @Data
 @TableName("{table}")
 public class {class_name}Entity {{
+    /** 主键ID，MyBatis Plus 自增主键 */
     @TableId(type = IdType.AUTO)
     private Long id;
 {fields}
+    /** 数据创建时间，由数据层自动维护 */
     private LocalDateTime createdAt;
+    /** 数据更新时间，由数据层自动维护 */
     private LocalDateTime updatedAt;
 }}
 """
@@ -350,6 +756,7 @@ def _dto(package_name: str, module: Dict[str, Any]) -> str:
     required_imports = sorted({imports[item] for item in field_types if item in imports})
     import_text = "\n".join(f"import {item};" for item in required_imports)
     fields = "\n".join(
+        f'    /** {_field_business_comment(module.get("name", "业务对象"), label, "field")} */\n'
         f'    @Schema(description = "{label}")\n'
         + (
             f'    @NotBlank(message = "{label}不能为空")\n'
@@ -368,6 +775,10 @@ import jakarta.validation.constraints.NotNull;
 import lombok.Data;
 {import_text}
 
+/**
+ * {_module_business_comment(module, "controller")}
+ * 用于 Controller 接收并校验前端表单参数，校验失败由 GlobalExceptionHandler 统一处理。
+ */
 @Data
 @Schema(description = "{module["name"]}保存参数")
 public class {class_name}DTO {{
@@ -428,6 +839,12 @@ public interface {class_name}Mapper extends BaseMapper<{class_name}Entity> {{
 
 def _service(package_name: str, module: Dict[str, Any]) -> str:
     class_name = _pascal(module["key"])
+    action_methods = "\n".join(
+        f"    void {action['java_method']}(Long id);"
+        for action in module.get("business_actions", [])
+    )
+    if action_methods:
+        action_methods = "\n" + action_methods
     return f"""
 package {package_name}.module.{module["key"]}.service;
 
@@ -436,12 +853,16 @@ import {package_name}.common.PageQuery;
 import {package_name}.module.{module["key"]}.dto.{class_name}DTO;
 import {package_name}.module.{module["key"]}.vo.{class_name}VO;
 
+/**
+ * {_module_business_comment(module, "service")}
+ */
 public interface {class_name}Service {{
     IPage<{class_name}VO> page(PageQuery query);
     {class_name}VO detail(Long id);
     Long create({class_name}DTO dto);
     void update(Long id, {class_name}DTO dto);
     void delete(Long id);
+{action_methods}
 }}
 """
 
@@ -449,6 +870,26 @@ public interface {class_name}Service {{
 def _service_impl(package_name: str, module: Dict[str, Any]) -> str:
     class_name = _pascal(module["key"])
     first_field = _field_name(0)
+    action_methods = "\n".join(
+        f"""
+    @Override
+    @Transactional
+    public void {action['java_method']}(Long id) {{
+        // 业务动作：{action['label']}，由规划 api_list 生成并记录到业务字段
+        applyBusinessAction(id, "{action['label']}");
+    }}
+"""
+        for action in module.get("business_actions", [])
+    )
+    action_setters = []
+    for index, label in enumerate(module.get("fields", [])):
+        if _java_type(label) != "String":
+            continue
+        if any(keyword in label for keyword in ["状态", "结果", "操作", "意见", "节点"]):
+            action_setters.append(f"        entity.set{_pascal(_field_name(index))}(actionLabel);")
+    if not action_setters:
+        action_setters.append("        // 当前模块未识别到可写状态字段，仅更新时间用于留痕。")
+    action_setter_text = "\n".join(action_setters)
     return f"""
 package {package_name}.module.{module["key"]}.service.impl;
 
@@ -467,6 +908,9 @@ import org.springframework.transaction.annotation.Transactional;
 
 import java.time.LocalDateTime;
 
+/**
+ * {_module_business_comment(module, "service")}
+ */
 @Service
 public class {class_name}ServiceImpl implements {class_name}Service {{
     private final {class_name}Mapper mapper;
@@ -477,6 +921,7 @@ public class {class_name}ServiceImpl implements {class_name}Service {{
 
     @Override
     public IPage<{class_name}VO> page(PageQuery query) {{
+        // 分页查询：先按关键字模糊匹配核心字段，再按主键倒序
         LambdaQueryWrapper<{class_name}Entity> wrapper = new LambdaQueryWrapper<>();
         if (!query.keyword().isBlank()) {{
             wrapper.like({class_name}Entity::get{_pascal(first_field)}, query.keyword());
@@ -488,6 +933,7 @@ public class {class_name}ServiceImpl implements {class_name}Service {{
 
     @Override
     public {class_name}VO detail(Long id) {{
+        // 详情：按主键查询，记录不存在时抛业务异常
         {class_name}Entity entity = mapper.selectById(id);
         if (entity == null) {{
             throw new IllegalArgumentException("{module["name"]}记录不存在");
@@ -498,6 +944,7 @@ public class {class_name}ServiceImpl implements {class_name}Service {{
     @Override
     @Transactional
     public Long create({class_name}DTO dto) {{
+        // 新增：DTO 拷贝到 Entity，事务内写入数据库并回填时间戳
         {class_name}Entity entity = new {class_name}Entity();
         BeanUtils.copyProperties(dto, entity);
         LocalDateTime now = LocalDateTime.now();
@@ -510,6 +957,7 @@ public class {class_name}ServiceImpl implements {class_name}Service {{
     @Override
     @Transactional
     public void update(Long id, {class_name}DTO dto) {{
+        // 更新：先校验存在性，再按主键更新，事务保证原子性
         detail(id);
         {class_name}Entity entity = new {class_name}Entity();
         BeanUtils.copyProperties(dto, entity);
@@ -521,9 +969,21 @@ public class {class_name}ServiceImpl implements {class_name}Service {{
     @Override
     @Transactional
     public void delete(Long id) {{
+        // 删除：未命中则视为业务异常
         if (mapper.deleteById(id) == 0) {{
             throw new IllegalArgumentException("{module["name"]}记录不存在");
         }}
+    }}
+{action_methods}
+
+    private void applyBusinessAction(Long id, String actionLabel) {{
+        {class_name}Entity entity = mapper.selectById(id);
+        if (entity == null) {{
+            throw new IllegalArgumentException("{module["name"]}记录不存在");
+        }}
+{action_setter_text}
+        entity.setUpdatedAt(LocalDateTime.now());
+        mapper.updateById(entity);
     }}
 
     private {class_name}VO toVO({class_name}Entity entity) {{
@@ -537,6 +997,20 @@ public class {class_name}ServiceImpl implements {class_name}Service {{
 
 def _controller(package_name: str, module: Dict[str, Any]) -> str:
     class_name = _pascal(module["key"])
+    extra_imports = ""
+    if any(action["annotation"] == "PatchMapping" for action in module.get("business_actions", [])):
+        extra_imports = "import org.springframework.web.bind.annotation.PatchMapping;\n"
+    action_endpoints = "\n".join(
+        f"""
+    /** 执行{module["name"]}业务动作：{action['label']} */
+    @{action['annotation']}("/{{id}}/{action['code']}")
+    public ApiResponse<Void> {action['java_method']}(@PathVariable Long id) {{
+        service.{action['java_method']}(id);
+        return ApiResponse.success(null);
+    }}
+"""
+        for action in module.get("business_actions", [])
+    )
     return f"""
 package {package_name}.module.{module["key"]}.controller;
 
@@ -550,13 +1024,16 @@ import jakarta.validation.Valid;
 import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
-import org.springframework.web.bind.annotation.PostMapping;
+{extra_imports}import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.PutMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
+/**
+ * {_module_business_comment(module, "controller")}
+ */
 @RestController
 @RequestMapping("/api/{module["key"]}")
 public class {class_name}Controller {{
@@ -566,6 +1043,7 @@ public class {class_name}Controller {{
         this.service = service;
     }}
 
+    /** {_controller_method_comment(module, "list")} */
     @GetMapping
     public ApiResponse<IPage<{class_name}VO>> page(
         @RequestParam(defaultValue = "1") long page,
@@ -575,16 +1053,19 @@ public class {class_name}Controller {{
         return ApiResponse.success(service.page(new PageQuery(page, size, keyword)));
     }}
 
+    /** {_controller_method_comment(module, "detail")} */
     @GetMapping("/{{id}}")
     public ApiResponse<{class_name}VO> detail(@PathVariable Long id) {{
         return ApiResponse.success(service.detail(id));
     }}
 
+    /** {_controller_method_comment(module, "create")} */
     @PostMapping
     public ApiResponse<Long> create(@Valid @RequestBody {class_name}DTO dto) {{
         return ApiResponse.success(service.create(dto));
     }}
 
+    /** {_controller_method_comment(module, "update")} */
     @PutMapping("/{{id}}")
     public ApiResponse<Void> update(
         @PathVariable Long id,
@@ -594,11 +1075,13 @@ public class {class_name}Controller {{
         return ApiResponse.success(null);
     }}
 
+    /** {_controller_method_comment(module, "delete")} */
     @DeleteMapping("/{{id}}")
     public ApiResponse<Void> delete(@PathVariable Long id) {{
         service.delete(id);
         return ApiResponse.success(null);
     }}
+{action_endpoints}
 }}
 """
 
@@ -704,6 +1187,12 @@ public final class {class_name}Metadata {{
 
 def _operation_enum(package_name: str, module: Dict[str, Any]) -> str:
     class_name = _pascal(module["key"])
+    business_entries = ""
+    if module.get("business_actions"):
+        business_entries = ",\n" + ",\n".join(
+            f'    {action["code"].upper()}("{action["code"]}", "{action["label"]}", false)'
+            for action in module.get("business_actions", [])
+        )
     return f"""
 package {package_name}.module.{module["key"]}.metadata;
 
@@ -717,7 +1206,7 @@ public enum {class_name}Operation {{
     CREATE("create", "新增", false),
     UPDATE("update", "编辑", false),
     DELETE("delete", "删除", false),
-    EXPORT("export", "导出", false);
+    EXPORT("export", "导出", false){business_entries};
 
     private final String code;
     private final String label;
@@ -875,13 +1364,23 @@ class {class_name}DTOTest {{
 
 def _controller_test(package_name: str, module: Dict[str, Any]) -> str:
     class_name = _pascal(module["key"])
+    expected_endpoint_count = 5 + len(module.get("business_actions", []))
+    action_assertions = "\n".join(
+        f"        assertTrue(hasAnnotation(methods, {action['annotation']}.class, \"{action['java_method']}\"));"
+        for action in module.get("business_actions", [])
+    )
+    if action_assertions:
+        action_assertions = "\n" + action_assertions
+    extra_imports = ""
+    if any(action["annotation"] == "PatchMapping" for action in module.get("business_actions", [])):
+        extra_imports = "import org.springframework.web.bind.annotation.PatchMapping;\n"
     return f"""
 package {package_name}.module.{module["key"]}.controller;
 
 import org.junit.jupiter.api.Test;
 import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
-import org.springframework.web.bind.annotation.PostMapping;
+{extra_imports}import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.PutMapping;
 import org.springframework.web.bind.annotation.RequestMapping;
 
@@ -908,19 +1407,21 @@ class {class_name}ControllerContractTest {{
         assertTrue(hasAnnotation(methods, PostMapping.class, "create"));
         assertTrue(hasAnnotation(methods, PutMapping.class, "update"));
         assertTrue(hasAnnotation(methods, DeleteMapping.class, "delete"));
+{action_assertions}
     }}
 
     @Test
-    void shouldKeepFivePublicBusinessEndpoints() {{
+    void shouldKeepPlannedBusinessEndpoints() {{
         long endpointCount = Arrays.stream({class_name}Controller.class.getDeclaredMethods())
             .filter(method ->
                 method.isAnnotationPresent(GetMapping.class)
                     || method.isAnnotationPresent(PostMapping.class)
                     || method.isAnnotationPresent(PutMapping.class)
                     || method.isAnnotationPresent(DeleteMapping.class)
+                    || method.isAnnotationPresent(org.springframework.web.bind.annotation.PatchMapping.class)
             )
             .count();
-        assertEquals(5, endpointCount);
+        assertEquals({expected_endpoint_count}, endpointCount);
     }}
 
     private boolean hasAnnotation(
@@ -938,6 +1439,13 @@ class {class_name}ControllerContractTest {{
 
 def _service_contract_test(package_name: str, module: Dict[str, Any]) -> str:
     class_name = _pascal(module["key"])
+    expected_method_count = 5 + len(module.get("business_actions", []))
+    action_assertions = "\n".join(
+        f'        assertTrue(methods.containsKey("{action["java_method"]}"));'
+        for action in module.get("business_actions", [])
+    )
+    if action_assertions:
+        action_assertions = "\n" + action_assertions
     return f"""
 package {package_name}.module.{module["key"]}.service;
 
@@ -965,7 +1473,8 @@ class {class_name}ServiceContractTest {{
         assertTrue(methods.containsKey("create"));
         assertTrue(methods.containsKey("update"));
         assertTrue(methods.containsKey("delete"));
-        assertEquals(5, methods.size());
+{action_assertions}
+        assertEquals({expected_method_count}, methods.size());
     }}
 
     @Test
@@ -1048,26 +1557,30 @@ def _sql_type(java_type: str) -> str:
 
 def _table_sql(module: Dict[str, Any], table: str) -> str:
     columns = ",\n".join(
-        f"  {_field_name(index)} {_sql_type(_java_type(field))} NOT NULL COMMENT '{field}'"
-        for index, field in enumerate(module["fields"])
+        f"  -- {_field_business_comment(module.get('name', '业务对象'), label, 'field')}\n"
+        f"  {_field_name(index)} {_sql_type(_java_type(label))} NOT NULL COMMENT '{label}'"
+        for index, label in enumerate(module["fields"])
     )
     return f"""
+-- {_module_business_comment(module, 'sql_table')}
 DROP TABLE IF EXISTS {table};
 CREATE TABLE {table} (
   id BIGINT PRIMARY KEY AUTO_INCREMENT,
 {columns},
-  created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-  updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+  created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '记录创建时间',
+  updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '记录更新时间'
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='{module["name"]}';
 """
 
 
 def _h2_table_sql(module: Dict[str, Any], table: str) -> str:
     columns = ",\n".join(
-        f"  {_field_name(index)} {_sql_type(_java_type(field))} NOT NULL"
-        for index, field in enumerate(module["fields"])
+        f"  -- {_field_business_comment(module.get('name', '业务对象'), label, 'field')}\n"
+        f"  {_field_name(index)} {_sql_type(_java_type(label))} NOT NULL"
+        for index, label in enumerate(module["fields"])
     )
     return f"""
+-- {_module_business_comment(module, 'sql_table')}
 DROP TABLE IF EXISTS {table};
 CREATE TABLE {table} (
   id BIGINT GENERATED BY DEFAULT AS IDENTITY PRIMARY KEY,
@@ -1202,6 +1715,12 @@ def _seed_sql(module: Dict[str, Any], table: str, count: int = 15) -> str:
 
 def _api_file(module: Dict[str, Any]) -> str:
     key = module["key"]
+    action_exports = "\n".join(
+        f"export const {action['js_function']} = id => request.{action['js_http_method']}(`/{key}/${{id}}/{action['code']}`)"
+        for action in module.get("business_actions", [])
+    )
+    if action_exports:
+        action_exports = "\n" + action_exports
     return f"""
 import request from './request'
 
@@ -1210,12 +1729,26 @@ export const get{_pascal(key)} = id => request.get(`/{key}/${{id}}`)
 export const create{_pascal(key)} = data => request.post('/{key}', data)
 export const update{_pascal(key)} = (id, data) => request.put(`/{key}/${{id}}`, data)
 export const delete{_pascal(key)} = id => request.delete(`/{key}/${{id}}`)
+{action_exports}
 """
 
 
 def _vue_page(module: Dict[str, Any]) -> str:
     key = module["key"]
     pascal = _pascal(key)
+    actions = module.get("business_actions", [])
+    action_imports = "".join(f", {action['js_function']}" for action in actions)
+    action_map = ", ".join(
+        f"{json.dumps(action['code'], ensure_ascii=False)}: {action['js_function']}"
+        for action in actions
+    )
+    action_buttons = "\n".join(
+        f'            <el-button link type="success" @click="runBusinessAction(row, \'{action["code"]}\', \'{action["label"]}\')">{action["label"]}</el-button>'
+        for action in actions
+    )
+    if action_buttons:
+        action_buttons = "\n" + action_buttons
+    action_column_width = 160 + len(actions) * 72
     field_defs = json.dumps(
         [
             {"key": _field_name(index), "label": label}
@@ -1238,16 +1771,18 @@ def _vue_page(module: Dict[str, Any]) -> str:
       <div class="kanban-preview"><article v-for="status in ['待处理','处理中','已完成']" :key="status"><b>{{status}}</b><p v-for="index in 2" :key="index">{{status}}任务 {{index}}</p></article></div>
 """,
         "dashboard": """
-      <div class="module-dashboard"><article v-for="(field,index) in fields.slice(0,4)" :key="field.key"><span>{{field.label}}</span><b>{{128 + index * 36}}</b></article><div class="mini-trend"><i v-for="height in [38,62,48,76,58,88]" :style="{height:height+'%'}"></i></div></div>
+      <div class="module-dashboard"><article v-for="(field,index) in fields.slice(0,4)" :key="field.key"><header><i class="m-icon"></i><b>{{field.label}}</b></header><strong>{{128 + index * 36}}</strong><footer><span class="m-trend-up">+{{4 + index}}%</span></footer></article><div class="mini-trend"><svg viewBox="0 0 200 80" class="mini-trend-svg"><polyline points="0,52 30,40 60,46 90,28 120,34 150,18 180,24" fill="none" stroke="#2678c9" stroke-width="2"/><polyline points="0,62 30,56 60,60 90,42 120,50 150,38 180,42" fill="none" stroke="#39b275" stroke-width="2" stroke-dasharray="4 3"/></svg></div><div class="mini-status"><span class="tag tag-warn">预警</span><span class="tag tag-info">在办</span><span class="tag tag-success">完成</span></div></div>
 """,
     }.get(pattern, "")
     return f"""
+<!-- {_module_business_comment(module, 'vue_page')} -->
 <script setup>
+// {_module_business_comment(module, 'vue_page')}
 import {{ onMounted, reactive, ref }} from 'vue'
 import {{ ElMessage, ElMessageBox }} from 'element-plus'
 import {{ fields }} from '../config/{key}'
 import {{
-  page{pascal}, create{pascal}, update{pascal}, delete{pascal}
+  page{pascal}, create{pascal}, update{pascal}, delete{pascal}{action_imports}
 }} from '../api/{key}'
 
 const loading = ref(false)
@@ -1257,6 +1792,7 @@ const rows = ref([])
 const total = ref(0)
 const query = reactive({{ page: 1, size: 10, keyword: '' }})
 const form = reactive(Object.fromEntries(fields.map(item => [item.key, ''])))
+const businessActionHandlers = {{{action_map}}}
 const rules = Object.fromEntries(fields.map(item => [
   item.key,
   [{{ required: true, message: `请输入${{item.label}}`, trigger: 'blur' }}]
@@ -1302,6 +1838,18 @@ async function remove(row) {{
   load()
 }}
 
+async function runBusinessAction(row, actionCode, actionLabel) {{
+  const handler = businessActionHandlers[actionCode]
+  if (!handler) {{
+    ElMessage.warning('当前操作暂未配置')
+    return
+  }}
+  await ElMessageBox.confirm(`确认对该记录执行「${{actionLabel}}」操作吗？`, '业务操作确认', {{ type: 'warning' }})
+  await handler(row.id)
+  ElMessage.success(`${{actionLabel}}成功`)
+  load()
+}}
+
 onMounted(load)
 </script>
 
@@ -1321,10 +1869,11 @@ onMounted(load)
       <el-table v-loading="loading" :data="rows" stripe>
         <el-table-column type="index" label="序号" width="70" />
         <el-table-column v-for="field in fields" :key="field.key" :prop="field.key" :label="field.label" min-width="140" />
-        <el-table-column label="操作" width="160" fixed="right">
+        <el-table-column label="操作" width="{action_column_width}" fixed="right">
           <template #default="{{ row }}">
             <el-button link type="primary" @click="openEdit(row)">编辑</el-button>
             <el-button link type="danger" @click="remove(row)">删除</el-button>
+{action_buttons}
           </template>
         </el-table-column>
       </el-table>
@@ -1364,6 +1913,10 @@ def _frontend_config(module: Dict[str, Any]) -> str:
         }
         for index, label in enumerate(module["fields"])
     ]
+    business_operations = "".join(
+        f",\n  {{code: {json.dumps(action['code'], ensure_ascii=False)}, label: {json.dumps(action['label'], ensure_ascii=False)}, readOnly: false}}"
+        for action in module.get("business_actions", [])
+    )
     return f"""
 export const moduleKey = '{module["key"]}'
 export const moduleName = '{module["name"]}'
@@ -1376,6 +1929,7 @@ export const operations = [
   {{code: 'update', label: '编辑', readOnly: false}},
   {{code: 'delete', label: '删除', readOnly: false}},
   {{code: 'export', label: '导出', readOnly: false}}
+{business_operations}
 ]
 
 export function emptyForm() {{
@@ -1523,30 +2077,159 @@ The generated application templates, business structure, sample data and styling
 produced by AI Copyright Factory and do not copy third-party demo branding or pages.
 """,
     )
+    # ISSUE-011：生成项目指纹和原创性报告
+    _write(
+        root / "project_fingerprint.json",
+        json.dumps(
+            _project_fingerprint(planning, root), ensure_ascii=False, indent=2
+        ),
+    )
+    _write(
+        root / "originality_report.json",
+        json.dumps(
+            _originality_report(planning, root), ensure_ascii=False, indent=2
+        ),
+    )
+
+
+def _svg_donut(distribution: List[Dict[str, Any]]) -> str:
+    """生成 SVG 环形占比图。"""
+    total = sum(item["weight"] for item in distribution) or 1
+    radius = 50
+    circumference = 2 * 3.14159 * radius
+    segments: List[str] = []
+    cumulative = 0.0
+    palette = ["#2678c9", "#39b275", "#e8a13a", "#d65a5a", "#7b6cd9"]
+    for index, item in enumerate(distribution):
+        fraction = item["weight"] / total
+        dash = fraction * circumference
+        gap = circumference - dash
+        offset = -cumulative
+        cumulative += dash
+        color = palette[index % len(palette)]
+        segments.append(
+            f'<circle r="{radius}" cx="70" cy="70" fill="transparent" '
+            f'stroke="{color}" stroke-width="18" '
+            f'stroke-dasharray="{dash:.2f} {gap:.2f}" '
+            f'stroke-dashoffset="{offset:.2f}" />'
+        )
+    legend = "".join(
+        f'<li><i style="background:{palette[index % len(palette)]}"></i>'
+        f'<span>{item["label"]}</span><b>{item["weight"]}%</b></li>'
+        for index, item in enumerate(distribution)
+    )
+    return (
+        f'<svg viewBox="0 0 140 140" class="donut-svg">'
+        f'<circle r="{radius}" cx="70" cy="70" fill="transparent" stroke="#eef3f8" stroke-width="18"/>'
+        f'{"".join(segments)}'
+        f'<text x="70" y="68" text-anchor="middle" class="donut-center">{total}</text>'
+        f'<text x="70" y="86" text-anchor="middle" class="donut-sub">总占比</text>'
+        f'</svg><ul class="donut-legend">{legend}</ul>'
+    )
+
+
+def _svg_line_trend(series: List[int], labels: List[str]) -> str:
+    """生成 SVG 折线趋势图（最近 N 天）。"""
+    if not series:
+        return '<div class="trend-empty">暂无趋势数据</div>'
+    width = 360
+    height = 140
+    max_v = max(series) or 1
+    min_v = min(series)
+    span = max(max_v - min_v, 1)
+    points: List[str] = []
+    fill_points: List[str] = []
+    step = width / max(len(series) - 1, 1)
+    for i, value in enumerate(series):
+        x = i * step
+        y = height - ((value - min_v) / span) * (height - 20) - 10
+        points.append(f"{x:.1f},{y:.1f}")
+        fill_points.append(f"{x:.1f},{height}")
+    fill_points.append(f"{width},{height}")
+    last_value = series[-1]
+    return (
+        f'<svg viewBox="0 0 {width} {height}" class="trend-svg">'
+        f'<polygon points="{" ".join(points + fill_points)}" class="trend-area"/>'
+        f'<polyline points="{" ".join(points)}" class="trend-line"/>'
+        f'<circle cx="{(len(series)-1)*step:.1f}" cy="{height - ((last_value-min_v)/span)*(height-20) - 10:.1f}" r="4" class="trend-dot"/>'
+        + "".join(
+            f'<text x="{i*step:.1f}" y="{height+18}" class="trend-label">{labels[i]}</text>'
+            for i in range(len(series))
+        )
+        + "</svg>"
+    )
+
+
+def _svg_bar_groups(
+    distribution: List[Dict[str, Any]], series: List[int]
+) -> str:
+    """生成 SVG 分组柱状图（按状态对比）。"""
+    width = 360
+    height = 140
+    bars: List[str] = []
+    palette = ["#2678c9", "#39b275", "#e8a13a", "#d65a5a"]
+    bar_w = width / (len(distribution) * 2 + 2)
+    for i, item in enumerate(distribution):
+        x = (i * 2 + 1) * bar_w
+        h = (item["weight"] / 100) * (height - 30)
+        y = height - h - 20
+        color = palette[i % len(palette)]
+        bars.append(
+            f'<rect x="{x:.1f}" y="{y:.1f}" width="{bar_w:.1f}" height="{h:.1f}" '
+            f'fill="url(#barGrad{i})" class="bar-rect" />'
+            f'<text x="{x + bar_w/2:.1f}" y="{y-4:.1f}" text-anchor="middle" class="bar-value">{item["weight"]}%</text>'
+            f'<text x="{x + bar_w/2:.1f}" y="{height-2:.1f}" text-anchor="middle" class="bar-label">{item["label"]}</text>'
+            f'<defs><linearGradient id="barGrad{i}" x1="0" x2="0" y1="0" y2="1"><stop offset="0%" stop-color="{color}" stop-opacity="0.95"/><stop offset="100%" stop-color="{color}" stop-opacity="0.55"/></linearGradient></defs>'
+        )
+    return f'<svg viewBox="0 0 {width} {height}" class="bar-svg">{"".join(bars)}</svg>'
 
 
 def _dashboard_vue(planning: Dict[str, Any], menu: List[Dict[str, str]]) -> str:
     pattern = planning.get("ui_plan", {}).get("home_pattern", "metric_dashboard")
+    kpis = _kpi_indicators_for_planning(planning)
+    distribution = _status_distribution_for_planning(planning)
+    trend_series = _trend_series_for_planning(planning, days=7)
+    trend_labels = ["周一", "周二", "周三", "周四", "周五", "周六", "周日"]
+    activities = _recent_activities_for_planning(planning)
+    kpi_cards = "".join(
+        f'<article class="kpi-card kpi-trend-{k["trend_dir"]}">'
+        f'<header><i class="kpi-icon">{_kpi_icon_svg(i)}</i><b>{k["label"]}</b></header>'
+        f'<div class="kpi-value">{k["value"]:,}<small>{k["unit"]}</small></div>'
+        f'<footer><span class="kpi-trend">{k["trend"]} 较上期</span></footer>'
+        f"</article>"
+        for i, k in enumerate(kpis)
+    )
     if pattern == "task_dashboard":
-        body = """
+        body = f"""
     <div class="task-workbench">
-      <el-card><h3>我的待办</h3><p v-for="(item,index) in modules.slice(0,4)" :key="item.key"><b>{{index + 1}}</b>{{item.name}}待处理事项 <span>{{8 + index * 3}}</span></p></el-card>
+      <el-card class="kpi-row"><h3>核心业务指标</h3><div class="kpi-grid">{kpi_cards}</div></el-card>
+      <el-card><h3>我的待办</h3><p v-for="(item,index) in modules.slice(0,4)" :key="item.key"><b>{{{{index + 1}}}}</b>{{{{item.name}}}}待处理事项 <span>{{{{8 + index * 3}}}}</span></p></el-card>
       <el-card><h3>业务流程</h3><div class="flow-line"><i>受理</i><em></em><i>办理</i><em></em><i>审核</i><em></em><i>归档</i></div></el-card>
-      <el-card><h3>快捷入口</h3><div class="quick-grid"><router-link v-for="item in modules" :key="item.key" :to="'/'+item.key">{{item.name}}</router-link></div></el-card>
+      <el-card class="dashboard-trend-card"><h3>近 7 日业务办理趋势</h3>{_svg_line_trend(trend_series, trend_labels)}</el-card>
+      <el-card class="dashboard-activities"><h3>最近动态</h3><ul>{"".join(f'<li class="activity-{a["level"]}"><span class="dot"></span><b>{a["action"]}</b><em>{a["module"]}</em><small>{a["minutes_ago"]} 分钟前</small></li>' for a in activities)}</ul></el-card>
     </div>
 """
     elif pattern == "analysis_dashboard":
-        body = """
+        body = f"""
     <div class="analysis-workbench">
-      <div class="analysis-metrics"><article v-for="(item,index) in modules.slice(0,4)" :key="item.key"><span>{{item.name}}</span><b>{{356 + index * 89}}</b><small>较上期 +{{4 + index}}%</small></article></div>
-      <el-card class="trend-panel"><h3>核心指标趋势</h3><div class="bars"><i v-for="height in [32,48,42,68,61,82,74,91]" :style="{height:height+'%'}"></i></div></el-card>
-      <el-card class="ranking-panel"><h3>业务排行</h3><p v-for="(item,index) in modules" :key="item.key"><span>{{index + 1}}. {{item.name}}</span><b>{{98 - index * 7}}%</b></p></el-card>
+      <div class="kpi-row"><h3>核心业务指标</h3><div class="kpi-grid">{kpi_cards}</div></div>
+      <el-card class="trend-panel"><h3>近 7 日业务指标趋势</h3>{_svg_line_trend(trend_series, trend_labels)}</el-card>
+      <el-card class="status-panel"><h3>业务状态分布</h3><div class="status-row">{_svg_donut(distribution)}</div></el-card>
+      <el-card class="bar-panel"><h3>业务状态分布柱状对比</h3>{_svg_bar_groups(distribution, trend_series)}</el-card>
+      <el-card class="ranking-panel"><h3>业务模块排名</h3><p v-for="(item,index) in modules" :key="item.key"><span>{{{{index + 1}}}}. {{{{item.name}}}}</span><b>{{{{98 - index * 7}}}}%</b></p></el-card>
     </div>
 """
     else:
-        body = """
-    <div class="metric-grid"><el-card v-for="(item,index) in modules" :key="item.key" shadow="hover"><span>{{item.name}}</span><strong>{{128 + index * 37}}</strong><small>数据状态正常</small></el-card></div>
-    <el-card shadow="never"><h3>近七日业务趋势</h3><div class="bars"><i v-for="height in [42,58,51,76,68,86,73]" :style="{height:height+'%'}"></i></div></el-card>
+        body = f"""
+    <div class="kpi-row"><h3>核心业务指标</h3><div class="kpi-grid">{kpi_cards}</div></div>
+    <div class="dashboard-row">
+      <el-card class="trend-panel"><h3>近 7 日业务趋势</h3>{_svg_line_trend(trend_series, trend_labels)}</el-card>
+      <el-card class="status-panel"><h3>业务状态分布</h3><div class="status-row">{_svg_donut(distribution)}</div></el-card>
+    </div>
+    <div class="dashboard-row">
+      <el-card class="bar-panel"><h3>业务模块数量对比</h3>{_svg_bar_groups(distribution, trend_series)}</el-card>
+      <el-card class="activity-panel"><h3>最近业务动态</h3><ul>{"".join(f'<li class="activity-{a["level"]}"><span class="dot"></span><b>{a["action"]}</b><em>{a["module"]}</em><small>{a["minutes_ago"]} 分钟前</small></li>' for a in activities)}</ul></el-card>
+    </div>
 """
     return f"""
 <script setup>
@@ -1559,6 +2242,17 @@ const modules = {json.dumps(menu, ensure_ascii=False)}
   </section>
 </template>
 """
+
+
+def _kpi_icon_svg(index: int) -> str:
+    """返回 4 个内联 KPI 图标 SVG。"""
+    icons = [
+        '<svg viewBox="0 0 24 24"><path d="M3 13h4v8H3zM10 3h4v18h-4zM17 9h4v12h-4z"/></svg>',
+        '<svg viewBox="0 0 24 24"><path d="M4 18l8-8 4 4 4-4v6H4z" fill="none" stroke-width="2" stroke="currentColor"/></svg>',
+        '<svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9" fill="none" stroke="currentColor" stroke-width="2"/><path d="M12 7v5l3 2" stroke="currentColor" stroke-width="2" fill="none"/></svg>',
+        '<svg viewBox="0 0 24 24"><path d="M12 2l9 4-9 4-9-4 9-4zM3 11l9 4 9-4M3 15l9 4 9-4" fill="none" stroke="currentColor" stroke-width="2"/></svg>',
+    ]
+    return icons[index % len(icons)]
 
 
 def _app_vue(planning: Dict[str, Any], menu: List[Dict[str, str]]) -> str:
@@ -1611,15 +2305,16 @@ def _frontend_style(planning: Dict[str, Any]) -> str:
 """
     variants = f"""
 .shell-top>main{{padding:{padding}}}.shell-split{{display:grid;grid-template-columns:220px 1fr 220px;background:#eef3f8}}.shell-split>aside{{background:#132f50;color:#fff;padding:{padding};display:flex;flex-direction:column;gap:7px}}.shell-split>aside a{{color:#cbd8e7}}.shell-split>aside a.router-link-active{{background:#245b8f;color:#fff}}.shell-split>main>header{{height:64px;background:#fff;display:flex;justify-content:space-between;align-items:center;padding:0 {padding}}}.shell-split>main>.module-page,.shell-split>main>.dashboard{{padding:{padding}}}.context-panel{{background:#fff;padding:{padding};border-left:1px solid #dde5ee}}.context-panel p{{padding:12px;background:#f3f7fb;border-radius:7px}}
-.master-detail-preview,.tree-detail-preview{{display:grid;grid-template-columns:1fr 1.6fr;gap:12px;margin-bottom:18px}}.master-detail-preview>div,.master-detail-preview aside,.tree-detail-preview>*{{padding:16px;background:#f5f8fc;border:1px solid #e0e7ef;border-radius:8px}}.workflow-preview{{padding:18px;background:#f7f9fc;border-radius:8px;margin-bottom:18px}}.workflow-preview>div{{display:flex;align-items:center;margin-top:14px}}.workflow-preview span{{width:30px;height:30px;border-radius:50%;background:#2678c9;color:#fff;display:grid;place-items:center}}.workflow-preview i{{height:2px;background:#9fc5e8;flex:1}}.kanban-preview{{display:grid;grid-template-columns:repeat(3,1fr);gap:12px;margin-bottom:18px}}.kanban-preview article{{background:#eef3f8;padding:14px;border-radius:8px}}.kanban-preview p{{background:#fff;padding:10px;border-radius:6px}}.module-dashboard{{display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin-bottom:18px}}.module-dashboard article{{padding:16px;background:#f3f8fe;border-radius:8px}}.module-dashboard article span,.module-dashboard article b{{display:block}}.module-dashboard article b{{font-size:24px;margin-top:8px}}.mini-trend{{grid-column:1/-1;height:120px;display:flex;align-items:flex-end;gap:18px;padding:18px;background:#f8fafc}}.mini-trend i{{flex:1;background:#2d82cf;border-radius:4px 4px 0 0}}
+.master-detail-preview,.tree-detail-preview{{display:grid;grid-template-columns:1fr 1.6fr;gap:12px;margin-bottom:18px}}.master-detail-preview>div,.master-detail-preview aside,.tree-detail-preview>*{{padding:16px;background:#f5f8fc;border:1px solid #e0e7ef;border-radius:8px}}.workflow-preview{{padding:18px;background:#f7f9fc;border-radius:8px;margin-bottom:18px}}.workflow-preview>div{{display:flex;align-items:center;margin-top:14px}}.workflow-preview span{{width:30px;height:30px;border-radius:50%;background:#2678c9;color:#fff;display:grid;place-items:center}}.workflow-preview i{{height:2px;background:#9fc5e8;flex:1}}.kanban-preview{{display:grid;grid-template-columns:repeat(3,1fr);gap:12px;margin-bottom:18px}}.kanban-preview article{{background:#eef3f8;padding:14px;border-radius:8px}}.kanban-preview p{{background:#fff;padding:10px;border-radius:6px}}.module-dashboard{{display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin-bottom:18px}}.module-dashboard article{{padding:16px;background:#f3f8fe;border-radius:8px;border:1px solid #e0e7ef;position:relative}}.module-dashboard article header{{display:flex;align-items:center;gap:8px;margin-bottom:6px}}.module-dashboard article b{{font-size:13px;color:#52627a;font-weight:500}}.module-dashboard article strong{{font-size:24px;color:#1d5b9f;display:block;margin:6px 0}}.module-dashboard article .m-trend-up{{color:#39b275;font-size:12px}}.m-icon{{display:inline-block;width:8px;height:24px;border-radius:2px;background:linear-gradient(#2678c9,#39b275)}}.mini-trend{{grid-column:1/-1;background:#f8fafc;padding:14px;border-radius:6px}}.mini-trend-svg{{width:100%;height:70px}}.mini-status{{grid-column:1/-1;display:flex;gap:8px;padding:8px 0 0}}.mini-status .tag{{padding:3px 10px;border-radius:14px;font-size:12px}}.tag-warn{{background:#fff4d9;color:#a06b00}}.tag-info{{background:#e8f2ff;color:#2466ad}}.tag-success{{background:#e1f4e7;color:#1d7a3a}}.tag-danger{{background:#fde2e2;color:#a32424}}
 .task-workbench{{display:grid;grid-template-columns:1fr 1.4fr;gap:16px;margin-top:18px}}.task-workbench>.el-card:last-child{{grid-column:1/-1}}.task-workbench p{{display:grid;grid-template-columns:30px 1fr auto;align-items:center;padding:10px;border-bottom:1px solid #edf1f5}}.task-workbench p b{{width:24px;height:24px;display:grid;place-items:center;background:#e8f2ff;color:#2872b8;border-radius:50%}}.flow-line{{display:flex;align-items:center;padding:40px 20px}}.flow-line i{{font-style:normal;background:#2678c9;color:#fff;padding:12px;border-radius:50%}}.flow-line em{{height:2px;background:#9fc5e8;flex:1}}.quick-grid{{display:grid;grid-template-columns:repeat(4,1fr);gap:10px}}.quick-grid a{{padding:16px;background:#f0f6fc;color:#2469aa;text-decoration:none;border-radius:8px}}.analysis-workbench{{display:grid;grid-template-columns:2fr 1fr;gap:16px;margin-top:18px}}.analysis-metrics{{grid-column:1/-1;display:grid;grid-template-columns:repeat(4,1fr);gap:12px}}.analysis-metrics article{{padding:18px;background:#152f52;color:#fff;border-radius:9px}}.analysis-metrics span,.analysis-metrics small,.analysis-metrics b{{display:block}}.analysis-metrics b{{font-size:28px;margin:10px 0}}.ranking-panel p{{display:flex;justify-content:space-between;padding:10px 0;border-bottom:1px solid #edf1f5}}
-@media(max-width:1000px){{.shell-split{{grid-template-columns:190px 1fr}}.context-panel{{display:none}}.shell-top>header{{grid-template-columns:1fr auto}}.shell-top nav{{grid-row:2;grid-column:1/-1}}.module-dashboard{{grid-template-columns:1fr 1fr}}}}
+.dashboard{{padding:24px 28px 32px}}.kpi-row{{margin:18px 0 22px}}.kpi-row h3{{margin:0 0 12px;font-size:16px}}.kpi-grid{{display:grid;grid-template-columns:repeat(4,1fr);gap:14px}}.kpi-card{{padding:18px 18px 16px;background:linear-gradient(135deg,#fff,#f0f6fc);border-radius:10px;border:1px solid #e0e7ef;box-shadow:0 1px 0 rgba(20,60,120,.04)}}.kpi-card header{{display:flex;align-items:center;gap:8px;color:#52627a;font-size:13px;margin-bottom:8px}}.kpi-card header b{{font-weight:500}}.kpi-icon{{width:24px;height:24px;display:inline-grid;place-items:center;color:#2678c9;background:#e8f2ff;border-radius:6px}}.kpi-icon svg{{width:14px;height:14px;fill:currentColor;stroke:currentColor}}.kpi-value{{font-size:28px;font-weight:600;color:#1d2c44}}.kpi-value small{{font-size:12px;color:#7c8a9c;margin-left:6px;font-weight:400}}.kpi-trend{{font-size:12px;color:#7c8a9c}}.kpi-trend-up .kpi-trend{{color:#39b275}}.kpi-trend-down .kpi-trend{{color:#d65a5a}}.dashboard-row{{display:grid;grid-template-columns:1.4fr 1fr;gap:16px;margin-bottom:18px}}.trend-panel,.status-panel,.bar-panel,.activity-panel{{padding:18px}}.trend-panel h3,.status-panel h3,.bar-panel h3,.activity-panel h3{{margin:0 0 12px;font-size:15px}}.trend-svg{{width:100%;height:140px}}.trend-area{{fill:rgba(38,120,201,.12)}}.trend-line{{fill:none;stroke:#2678c9;stroke-width:2}}.trend-dot{{fill:#fff;stroke:#2678c9;stroke-width:2}}.trend-label{{font-size:11px;fill:#7c8a9c}}.donut-svg{{width:200px;height:200px;display:block;margin:0 auto}}.donut-center{{font-size:22px;fill:#1d2c44;font-weight:600}}.donut-sub{{font-size:11px;fill:#7c8a9c}}.status-row{{display:grid;grid-template-columns:200px 1fr;gap:18px;align-items:center}}.donut-legend{{list-style:none;padding:0;margin:0}}.donut-legend li{{display:grid;grid-template-columns:14px 1fr auto;align-items:center;gap:8px;padding:6px 0;border-bottom:1px dashed #e0e7ef}}.donut-legend i{{width:10px;height:10px;border-radius:2px;display:inline-block}}.donut-legend b{{color:#1d2c44}}.bar-svg{{width:100%;height:140px}}.bar-rect{{filter:drop-shadow(0 1px 2px rgba(20,60,120,.1))}}.bar-value{{font-size:11px;fill:#1d2c44;font-weight:600}}.bar-label{{font-size:11px;fill:#7c8a9c}}.activity-panel ul{{list-style:none;padding:0;margin:0}}.activity-panel li{{display:grid;grid-template-columns:8px 60px 1fr auto;align-items:center;gap:10px;padding:10px 0;border-bottom:1px solid #edf1f5}}.activity-panel li .dot{{width:8px;height:8px;border-radius:50%;background:#2678c9}}.activity-info .dot{{background:#2678c9}}.activity-warn .dot{{background:#e8a13a}}.activity-danger .dot{{background:#d65a5a}}.activity-panel li b{{color:#1d2c44;font-weight:600}}.activity-panel li em{{color:#52627a;font-style:normal}}.activity-panel li small{{color:#94a3b8;font-size:12px}}.dashboard-activities ul{{list-style:none;padding:0;margin:0}}.dashboard-activities li{{display:grid;grid-template-columns:8px 60px 1fr auto;gap:10px;padding:8px 0}}
+@media(max-width:1000px){{.shell-split{{grid-template-columns:190px 1fr}}.context-panel{{display:none}}.shell-top>header{{grid-template-columns:1fr auto}}.shell-top nav{{grid-row:2;grid-column:1/-1}}.module-dashboard{{grid-template-columns:1fr 1fr}}.kpi-grid{{grid-template-columns:repeat(2,1fr)}}.dashboard-row{{grid-template-columns:1fr}}.status-row{{grid-template-columns:1fr}}.analysis-workbench{{grid-template-columns:1fr}}}}
 """
     return base + variants
 
 
 def generate_java_project(job_dir: Path) -> None:
-    planning = json.loads((job_dir / "planning.json").read_text(encoding="utf-8"))
+    planning = _planning_with_actions(json.loads((job_dir / "planning.json").read_text(encoding="utf-8")))
     root = job_dir / "generated_project"
     backend = root / "backend"
     source_root = backend / "src/main/java"

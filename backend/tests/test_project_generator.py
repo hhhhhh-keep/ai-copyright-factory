@@ -48,6 +48,13 @@ class ProjectGeneratorTests(unittest.TestCase):
                 "police_cases",
                 "police_analysis_daily",
             ],
+            "api_list": [
+                "PUT /api/cases/{id}/approve",
+                "PUT /api/cases/{id}/reject",
+                "POST /api/cases/{id}/quick_audit",
+                "PUT /api/cases/{id}/transfer",
+                "PUT /api/cases/{id}/return",
+            ],
         }
         with tempfile.TemporaryDirectory() as directory:
             job_dir = Path(directory)
@@ -86,6 +93,29 @@ class ProjectGeneratorTests(unittest.TestCase):
                 root / "frontend/src/views/VehiclesPage.vue"
             ).read_text(encoding="utf-8")
             self.assertIn("master-detail-preview", vehicle_page)
+            cases_api = (root / "frontend/src/api/cases.js").read_text(
+                encoding="utf-8"
+            )
+            self.assertIn("approveCases", cases_api)
+            self.assertIn("rejectCases", cases_api)
+            self.assertIn("quickAuditCases", cases_api)
+            cases_page = (root / "frontend/src/views/CasesPage.vue").read_text(
+                encoding="utf-8"
+            )
+            self.assertIn("runBusinessAction(row", cases_page)
+            self.assertIn(">通过</el-button>", cases_page)
+            self.assertIn(">驳回</el-button>", cases_page)
+            self.assertIn(">快速审核</el-button>", cases_page)
+            controller = (
+                java_root / "module/cases/controller/CasesController.java"
+            ).read_text(encoding="utf-8")
+            self.assertIn('@PutMapping("/{id}/approve")', controller)
+            self.assertIn("public ApiResponse<Void> approve(", controller)
+            service = (
+                java_root / "module/cases/service/CasesService.java"
+            ).read_text(encoding="utf-8")
+            self.assertIn("void approve(Long id);", service)
+            self.assertIn("void quickAudit(Long id);", service)
             self.assertTrue((root / "THIRD_PARTY_NOTICES.md").exists())
 
 

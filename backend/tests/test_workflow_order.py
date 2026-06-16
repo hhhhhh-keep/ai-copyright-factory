@@ -1,10 +1,12 @@
 import unittest
+import json
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from types import SimpleNamespace
 from unittest.mock import patch
 
-from app.workflow import STEPS, run_generated_project, run_job
+from app.planner import PlannerValidationError
+from app.workflow import STEPS, _write_planner_diagnostics, run_generated_project, run_job
 
 
 class WorkflowOrderTests(unittest.TestCase):
@@ -13,6 +15,40 @@ class WorkflowOrderTests(unittest.TestCase):
         self.assertLess(keys.index("run"), keys.index("demo"))
         self.assertLess(keys.index("demo"), keys.index("screenshot"))
         self.assertLess(keys.index("screenshot"), keys.index("package"))
+
+    def test_planner_validation_error_writes_diagnostics(self):
+        with TemporaryDirectory() as tmp:
+            job_dir = Path(tmp)
+            error = PlannerValidationError(
+                "second failed",
+                first_text='{"bad": 1}',
+                second_text='{"still_bad": 1}',
+                first_error="first failed",
+                second_error="second failed",
+            )
+
+            _write_planner_diagnostics(job_dir, error)
+
+            diagnostics = job_dir / "planner_diagnostics"
+            self.assertEqual(
+                (diagnostics / "planner_raw_initial.txt").read_text(
+                    encoding="utf-8"
+                ),
+                '{"bad": 1}',
+            )
+            self.assertEqual(
+                (diagnostics / "planner_raw_repair.txt").read_text(
+                    encoding="utf-8"
+                ),
+                '{"still_bad": 1}',
+            )
+            payload = json.loads(
+                (diagnostics / "planner_diagnostics.json").read_text(
+                    encoding="utf-8"
+                )
+            )
+            self.assertEqual(payload["first_error"], "first failed")
+            self.assertEqual(payload["second_error"], "second failed")
 
     @patch("app.workflow._update")
     @patch("app.workflow._step")

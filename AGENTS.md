@@ -14,6 +14,7 @@
 - 返工对话 `propose_revision()` 同步 LLM-only，失败提示重试，不使用规则改写。
 - 行业基础映射（内部编码 → 显示名）保留在 `backend/app/planner.py` 的 `INDUSTRY_DISPLAY_NAMES` 与 `industry_name_for()` 中，仅用于把行业提示从编码转换为显示名，不参与校验。
 - Planning Review 是模块、页面、字段、数据库表和 UI 结构的唯一人工审核入口。
+- Project Generator 会解析 `planning.api_list` 中的模块业务动作接口，并生成对应前端按钮、API、Controller 与 Service 方法。
 - 生成项目完成运行验证后，必须先启动在线 Demo 并暂停在 `awaiting_demo_review`。
 - 用户审查通过后，才生成截图、文档、合规报告和最终 ZIP。
 - 用户可以通过自然语言提出返工意见；系统先展示新规划摘要，确认后才重新生成。
@@ -45,18 +46,22 @@ git diff --check
 - ISSUE-007：Planner 改为 LLM-only，取消行业知识库、模板回退和规划模式选择。
 - ISSUE-008 L1：状态区分、人工恢复按钮、启动扫描、任务锁和恢复记录已由 Claude 实施完成，并通过 Codex 二次复审。
 - ISSUE-009：模块字段上限放宽到 20，解决 13 个有效字段导致规划失败的问题。
+- ISSUE-010：Dashboard 页面视觉增强，含 5 类 SVG 业务化图形（KPI 卡 / 环形 / 折线 / 柱状 / 状态标签）+ 行业关键词匹配的差异化 KPI 文案，并通过 Codex 审查。
+- ISSUE-011：源码材料原创性增强，业务化中文注释（Java/Vue/SQL）+ project_fingerprint.json + originality_report.json，并通过 Codex 审查。
+- ISSUE-012：Planner 数据库表数量容错，自动补齐/规范化 `database_tables` 并保存失败诊断。
+- ISSUE-013：规划 `api_list` 中的业务动作落地为前端按钮、前端 API、后端 Controller/Service 和生成项目合约测试，解决审核操作只出现在规划文本、不出现在 Demo 页面的问题。
 - REGRESSION-001：Maven 校验强制使用 JDK 17 环境，解决 `61.0 / 52.0` 类版本错误。
 
 ISSUE-001 已被 ISSUE-002 取代，不应恢复旧的行业模块预选功能。
 
 ## 当前待修
 
-- ISSUE-010（P1）：Dashboard 页面视觉表达不足，需增强数据驾驶舱图形化展示。
-- ISSUE-011（P1）：源码材料原创性增强与业务化注释，需补 `project_fingerprint.json` / `originality_report.json` 和业务化注释策略。
+- 验证 Demo 超时回收、失败日志和运行中任务删除限制。
 
 ## 最近验证
 
-- 后端单元测试：86 项通过。
+- 后端单元测试：104 项通过。
+- 生成器临时产物检查：审核中心已生成“通过 / 驳回 / 快速审核 / 转交 / 退回补充”按钮、前端 API 和后端业务接口。
 - 工厂前端：`npm.cmd run build` 通过。
 - 生成项目前端：多壳层、多页面模式构建通过。
 - 生成项目后端：JDK 17 环境 Maven 79 项测试通过。

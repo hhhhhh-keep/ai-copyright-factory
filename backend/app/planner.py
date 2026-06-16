@@ -16,7 +16,7 @@ import re
 import urllib.error
 import urllib.request
 from pathlib import Path
-from typing import Any, Dict, List, Literal, Optional, Tuple
+from typing import Any, Dict, List, Literal, Optional, Set, Tuple
 
 from dotenv import load_dotenv
 from pydantic import BaseModel, Field, field_validator, model_validator
@@ -34,6 +34,25 @@ PagePattern = Literal[
     "dashboard",
 ]
 ShellPattern = Literal["sidebar_admin", "top_workspace", "split_console"]
+
+
+class PlannerValidationError(ValueError):
+    """规划两次校验失败时携带 LLM 原始响应，供 workflow 落盘诊断。"""
+
+    def __init__(
+        self,
+        message: str,
+        *,
+        first_text: str = "",
+        second_text: str = "",
+        first_error: str = "",
+        second_error: str = "",
+    ) -> None:
+        super().__init__(message)
+        self.first_text = first_text
+        self.second_text = second_text
+        self.first_error = first_error
+        self.second_error = second_error
 
 
 class UIPlan(BaseModel):
@@ -203,6 +222,7 @@ def _initial_messages(job: Dict[str, Any]) -> List[Dict[str, str]]:
         "输出一个结构化的软件规划 JSON 对象。\n"
         "- 行业字段仅作为普通参考信息，禁止把行业关键词当作模块白名单。\n"
         "- modules 数量为 3 到 8；每个模块 key 使用小写英文 snake_case 且唯一。\n"
+        "- database_tables 必须与 modules 数量相同、顺序一致；每个模块对应一个 snake_case 数据库表名。\n"
         "- 每个模块包含 1 到 8 个 pages；fields 建议 6 到 12 个，最多 20 个。\n"
         "- 每个模块必须提供 description；必须提供 target_users。\n"
         "- screenshots 只能引用登录页、首页或 modules 中存在的模块。\n"
@@ -231,6 +251,8 @@ def _repair_messages(
     system = (
         "你之前的输出无法被解析或不符合目标 JSON schema。"
         "请重新输出一个严格符合目标 schema 的合法 JSON 对象。"
+        "特别注意：database_tables 必须与 modules 数量相同、顺序一致，"
+        "每个模块对应一个合法且不重复的 snake_case 数据库表名。"
         "只输出 JSON 本身，不要 Markdown 围栏、不要解释、不要尾随说明。"
     )
     industry_hint = _industry_hint_text(job)
@@ -299,6 +321,70 @@ def _restore_user_input_fields(planning: Planning, job: Dict[str, Any]) -> Plann
     elif job.get("industry_name"):
         planning.industry_name = job["industry_name"]
     return planning
+
+
+# ---------- 结构规范化 ----------
+
+
+def _safe_table_name(name: str) -> str:
+    table = re.sub(r"[^a-z0-9_]+", "_", (name or "").strip().lower())
+    table = re.sub(r"_+", "_", table).strip("_")
+    if not table or not re.match(r"^[a-z]", table):
+        table = f"t_{table}" if table else "module_table"
+    table = table[:40].rstrip("_")
+    if len(table) < 2:
+        table = f"{table}_table"
+    return table
+
+
+def _unique_table_name(base: str, used: Set[str]) -> str:
+    table = _safe_table_name(base)
+    if table not in used:
+        used.add(table)
+        return table
+    suffix = 2
+    while True:
+        suffix_text = f"_{suffix}"
+        candidate = f"{table[:40 - len(suffix_text)]}{suffix_text}"
+        if candidate not in used:
+            used.add(candidate)
+            return candidate
+        suffix += 1
+
+
+def _normalize_database_tables(raw: Dict[str, Any]) -> Dict[str, Any]:
+    """按 modules 规范化 database_tables，降低 LLM 少表/多表导致的失败率。
+
+    规则：
+    - 模块缺表时，按模块 key 补齐。
+    - 表多于模块时，按模块数量截断。
+    - 表名非法或重复时，规范化为合法且唯一的 snake_case。
+    - 表顺序始终与 modules 顺序一致。
+    """
+    if not isinstance(raw, dict):
+        return raw
+    modules = raw.get("modules")
+    if not isinstance(modules, list) or not modules:
+        return raw
+    source_tables = raw.get("database_tables")
+    if not isinstance(source_tables, list):
+        source_tables = []
+
+    normalized: List[str] = []
+    used: Set[str] = set()
+    for index, module in enumerate(modules):
+        module_key = ""
+        if isinstance(module, dict):
+            module_key = str(module.get("key") or "")
+        candidate = ""
+        if index < len(source_tables):
+            candidate = str(source_tables[index] or "")
+        if not candidate.strip():
+            candidate = module_key or f"module_{index + 1}"
+        normalized.append(_unique_table_name(candidate, used))
+
+    raw["database_tables"] = normalized
+    return raw
 
 
 # ---------- JSON 容错 ----------
@@ -444,6 +530,7 @@ def _post_chat_completion(messages: List[Dict[str, str]], temperature: float) ->
 
 def _parse_and_validate(text: str) -> Planning:
     raw = _extract_json(text)
+    raw = _normalize_database_tables(raw)
     return Planning.model_validate(raw)
 
 
@@ -479,8 +566,18 @@ def _generate_with_repair(
         # 修复阶段：把错误摘要、原响应和目标 schema 一起发给模型
         repair_messages = _repair_messages(job, first_text, first_error)
         second_text = _post_chat_completion(repair_messages, temperature)
-        planning = _parse_and_validate(second_text)
-        return postprocess(planning, second_text), model_name
+        try:
+            planning = _parse_and_validate(second_text)
+            return postprocess(planning, second_text), model_name
+        except Exception as second_exc:
+            second_error = f"{type(second_exc).__name__}: {second_exc}"
+            raise PlannerValidationError(
+                second_error,
+                first_text=first_text,
+                second_text=second_text,
+                first_error=first_error,
+                second_error=second_error,
+            ) from second_exc
 
 
 def _build_planning_result(planning: Planning, _text: str) -> Planning:

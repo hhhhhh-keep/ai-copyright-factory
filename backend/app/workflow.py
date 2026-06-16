@@ -22,7 +22,7 @@ from docx.shared import Cm, Pt
 
 from .compliance import build_compliance_report
 from .enhancer import enhance_project, restore_enhancement
-from .planner import build_planning
+from .planner import PlannerValidationError, build_planning
 from .project_generator import generate_java_project
 
 
@@ -517,6 +517,7 @@ def generate_planning_draft(job_id: str) -> None:
             failed_stage=None,
         )
     except Exception as exc:
+        _write_planner_diagnostics(job_dir, exc)
         status = get_job(job_id)
         if status:
             for item in status["steps"]:
@@ -722,6 +723,32 @@ def generate_planning(job: Dict[str, Any], job_dir: Path) -> None:
     _update(
         job["job_id"],
         planner_model=result.model,
+    )
+
+
+def _write_planner_diagnostics(job_dir: Path, exc: Exception) -> None:
+    if not isinstance(exc, PlannerValidationError):
+        return
+    diagnostics_dir = job_dir / "planner_diagnostics"
+    diagnostics_dir.mkdir(parents=True, exist_ok=True)
+    (diagnostics_dir / "planner_raw_initial.txt").write_text(
+        exc.first_text or "",
+        encoding="utf-8",
+    )
+    (diagnostics_dir / "planner_raw_repair.txt").write_text(
+        exc.second_text or "",
+        encoding="utf-8",
+    )
+    _json_write(
+        diagnostics_dir / "planner_diagnostics.json",
+        {
+            "created_at": _now(),
+            "error": str(exc),
+            "first_error": exc.first_error,
+            "second_error": exc.second_error,
+            "initial_response_file": "planner_raw_initial.txt",
+            "repair_response_file": "planner_raw_repair.txt",
+        },
     )
 
 

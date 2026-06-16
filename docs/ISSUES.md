@@ -1,7 +1,7 @@
 # AI 软著工厂 V1.0 - 问题与交接记录
 
 > 用途：跨 Codex 窗口保留项目现状、用户反馈、实现结论和验证结果。
-> 当前结论：ISSUE-002 至 ISSUE-009 已完成；其中 ISSUE-008 L1 已由 Claude 实施并通过 Codex 二次复审；REGRESSION-001 已完成验证。新增待处理项：ISSUE-010 Dashboard 视觉增强、ISSUE-011 源码材料原创性增强。
+> 当前结论：ISSUE-002 至 ISSUE-013 已完成；其中 ISSUE-008 L1 已由 Claude 实施并通过 Codex 二次复审；REGRESSION-001 已完成验证。当前仍需回归：Demo 超时回收、失败日志和运行中任务删除限制。
 
 ## 问题处理约定
 
@@ -833,7 +833,7 @@ POST /api/jobs/{job_id}/resume
 
 ### ISSUE-010：Dashboard 页面视觉表达不足
 
-- 状态：`待讨论后统一修复`
+- 状态：`已通过 Codex 审查`
 - 优先级：`P1`
 - 发现日期：`2026-06-16`
 - 复现任务：`20260615221651-0b963954`
@@ -854,10 +854,22 @@ POST /api/jobs/{job_id}/resume
   - 不同业务模块生成的指标名称、数据分组和图形文案明显不同。
   - 生成项目仍可通过前端构建。
   - 自动截图中 Dashboard 首屏能看到主要图形信息。
+- 实现结果（Claude 实施 2026-06-16，已通过 Codex 审查）：
+  - `backend/app/project_generator.py` 新增 5 类 SVG 业务化图形组件：`_svg_donut`（环形占比）、`_svg_line_trend`（折线趋势）、`_svg_bar_groups`（分组柱状）、`_kpi_icon_svg`（4 类 KPI 图标）。
+  - 首页 dashboard 升级：每种 home_pattern（metric_dashboard / task_dashboard / analysis_dashboard）都有 KPI 卡片行 + 折线 + 环形 + 柱状 + 状态标签 + 最近动态列表。
+  - 业务化 KPI 文案：`_kpi_indicators_for_planning` 按 `_BUSINESS_KEYWORDS` 行业关键词匹配，监所→在押人数/今日新收/风险预警，案件→案件总数/在办案件/已结案件，勤务→值班人次/排班冲突/勤务完成率 等。
+  - 状态分布：`_status_distribution_for_planning` 按行业返回 4 类分布（监所含"高危"，案件含"在办"，车辆视频含"异常"，通用含"待办"等）。
+  - 趋势序列：`_trend_series_for_planning` 用软件名 hash 产出稳定 7 日序列。
+  - 7 日活动：`_recent_activities_for_planning` 包含办理/新增/审核/归档/告警/导出 6 种动作类型。
+  - 模块级 dashboard（page_pattern=dashboard）也升级为含 SVG 折线 + 业务化标签 + 业务化字段 KPI。
+  - 端到端实测：监所管理系统的 DashboardPage.vue 同时含 donut-svg / trend-svg / bar-svg / kpi-card / activity-，KPI 标签为"在押人数"等业务化文案。
+- Codex 审查修正：
+  - 将 Python 内置 `hash()` 替换为基于 `hashlib.sha256` 的 `_stable_seed()`，确保同一软件跨进程生成相同趋势序列、KPI 数字和 fingerprint seed。
+  - 新增跨 Python 进程稳定性测试，防止后续回退。
 
 ### ISSUE-011：源码材料原创性增强与业务化注释
 
-- 状态：`待讨论后统一修复`
+- 状态：`已通过 Codex 审查`
 - 优先级：`P1`
 - 发现日期：`2026-06-16`
 - 复现任务：`20260615221651-0b963954`
@@ -886,10 +898,124 @@ POST /api/jobs/{job_id}/resume
   - 输出 `project_fingerprint.json` 和 `originality_report.json`。
   - 源码材料中能看到业务化注释，但不影响项目编译、前端构建和 Maven 测试。
   - 合规报告或材料说明中能区分第三方依赖、模板生成代码和本项目差异化生成内容。
+- 实现结果（Claude 实施 2026-06-16，已通过 Codex 审查）：
+  - `backend/app/project_generator.py` 新增 4 类业务化注释 helper：
+    - `_module_business_comment(module, kind)`：返回 entity/repository/service/controller/vue_page/sql_table 六类的纯文本业务化注释（不含语言前缀）。
+    - `_controller_method_comment(module, method)`：list/detail/create/update/delete 5 类方法级注释。
+    - `_field_business_comment(module_name, field, kind)`：按字段名关键词（name/code/type/status/remark/amount/time × 中英文）匹配业务角色，fallback 是"业务属性"。
+  - 注释注入点：
+    - Java Entity：类级 Javadoc + 字段 Javadoc（含"业务主名称/业务编号或识别码/业务分类/当前业务状态/业务发生时间"等业务角色）。
+    - Java DTO：类级 Javadoc + 字段 Javadoc。
+    - Java Service：类级 Javadoc + 方法体内业务化中文注释（分页查询/新增/更新/删除/详情）。
+    - Java ServiceImpl：类级 + 5 个方法的方法体注释。
+    - Java Controller：类级 + 5 个方法的 Javadoc。
+    - SQL DDL：表级注释（"在押人员档案：数据库表结构..."）+ 字段级注释。
+    - Vue Page：HTML 注释 + 脚本注释双行（<!-- ... --> + // ...）。
+  - 新增 `project_fingerprint.json`：记录软件信息、UI 计划、模块命名、字段组合、页面模式、注释风格、差异化参数（确定性 hash 种子）。生成到 `generated_project/project_fingerprint.json`。
+  - 新增 `originality_report.json`：记录原创性来源（业务化 KPI / 业务化注释 / Dashboard 视觉组件 / UI 壳层变体）、模板复用范围（确定性 vs 业务个性化）、第三方依赖（Spring Boot 3 / Vue 3 / Element Plus / MyBatis Plus 等）、边界划分、验证清单。生成到 `generated_project/origity_report.json`。
+  - `generate_java_project` 末尾统一写入 fingerprint 和 originality_report，保持 `THIRD_PARTY_NOTICES.md` 不变。
+  - 端到端实测：监所管理系统生成的 DetaineeArchivesEntity 含 5 条字段 Javadoc，命中"业务编号或识别码/业务主名称/业务发生时间/当前业务状态"等业务角色；init.sql 含表级 + 字段级业务注释；DashboardPage.vue 同时含 donut-svg / trend-svg / bar-svg / kpi-card / activity- / 在押人数 KPI；project_fingerprint.json 与 originality_report.json 校验通过。
+  - 端到端测试：13 项新单元测试（`test_dashboard_and_originality.py`）全部通过：5 项 dashboard 视觉、5 项 Java/Vue/SQL 注释、3 项 fingerprint + originality_report。
+- Codex 审查修正：
+  - `project_fingerprint.json` 中的模块 `table` 改为读取 `planning.database_tables[index]`，缺失时才 fallback 为 `ed_{module_key}`，确保指纹记录与实际 SQL / Entity 表名一致。
+  - 新增 fingerprint 使用真实数据库表名的回归测试。
+- 验证：
+  - `python -m unittest tests.test_dashboard_and_originality -v`：15 项通过。
+  - `python -m unittest discover -s tests -v`：104 项通过。
+  - `python -m compileall app tests`：通过。
+
+### ISSUE-012：Planner 返回模块数与数据库表数不一致导致规划失败
+
+- 状态：`已修复`
+- 优先级：`P0`
+- 发现日期：`2026-06-16`
+- 复现任务：`20260616094630-40b7d690`
+- 任务输入：
+  - 软件名称：`涉案物品数据系统`
+  - 软件类型：`数据平台`
+  - 行业类型：`公安`
+  - 软件描述：`用于涉案物品信息、案件关联、关联人员的数据图谱发掘、案件提审证物提供和统计研判`
+- 现象：
+  - 任务在规划阶段失败，前端显示：
+    `ValidationError: 1 validation error for Planning Value error, 每个功能模块必须对应一个数据库表`
+  - `status.json` 中 `failed_stage="planning"`，未生成 `planning.json`。
+  - 失败任务目录仅保留 `status.json`，当前没有保存 LLM 首次响应和修复响应，无法复盘模型到底少了哪个表。
+- 当前代码判断：
+  - `backend/app/planner.py` 的 `Planning.tables_match_modules()` 要求 `len(database_tables) == len(modules)`。
+  - `_initial_messages()` 只要求 modules 数量、字段、截图和 UI 模式，没有明确写出 `database_tables 必须与 modules 一一对应，数量相同，顺序一致`。
+  - `_repair_messages()` 会把校验错误发回模型修复一次，但修复提示也没有把该硬约束提升为单独规则。
+  - `_generate_with_repair()` 第二次仍校验失败后直接抛错，任务进入 `failed`。
+- 问题本质：
+  - LLM-only 后没有模板兜底，规划阶段必须增强结构容错。
+  - 对“表数量缺失”这类可自动补全的问题，直接失败会降低任务成功率。
+  - 当前不保存原始 LLM 响应，排错成本偏高。
+- 建议修复范围：
+  1. 提示词层：
+     - `_initial_messages()` 和 `_repair_messages()` 明确要求：
+       `database_tables 必须与 modules 数量相同、顺序一致，每个模块对应一个 snake_case 表名，优先使用模块 key 或 module_key_records 形式。`
+  2. 解析后规范化层：
+     - 在 `Planning.model_validate()` 前或失败后增加确定性补全逻辑：当 `database_tables` 数量少于 `modules` 时，根据缺失模块 key 自动补齐表名；当数量多于 modules 时可截断或重新按 modules key 生成。
+     - 自动补全必须记录到后续诊断信息，不应静默隐藏。
+  3. 诊断层：
+     - 规划失败时保存 `planner_raw_initial.txt`、`planner_raw_repair.txt` 或等价 JSON 诊断文件，至少包含错误摘要、模型名、请求阶段和截断后的原始响应。
+- 验收标准：
+  - 新增单测覆盖：`database_tables` 少于 modules 时可补齐并通过。
+  - 新增单测覆盖：`database_tables` 多于 modules 或顺序不一致时有明确处理策略。
+  - 新增单测覆盖：两次规划失败时会落盘可排查的 LLM 原始响应或诊断文件。
+  - 复现任务同类输入重新生成规划时能进入 Planning Review，不再直接卡在规划失败。
+  - 保留现有约束：模块 key 唯一、表名 snake_case 且不重复。
+- 修复内容：
+  - `_initial_messages()` 与 `_repair_messages()` 明确要求 `database_tables` 与 `modules` 数量相同、顺序一致。
+  - 新增 `_normalize_database_tables()`：在 Pydantic 校验前按模块顺序补齐、截断并规范化表名；缺表时使用模块 key，非法或重复表名自动转为合法唯一 snake_case。
+  - 新增 `PlannerValidationError`：两次规划校验失败时携带首次响应、修复响应和错误摘要。
+  - `generate_planning_draft()` 捕获该异常后写入 `planner_diagnostics/planner_raw_initial.txt`、`planner_raw_repair.txt` 和 `planner_diagnostics.json`。
+- 验证：
+  - `python -m unittest tests.test_planner -v`：32 项通过。
+  - `python -m unittest tests.test_workflow_order -v`：4 项通过。
+  - `python -m unittest discover -s tests -v`：89 项通过。
+  - `python -m compileall app tests`：通过。
+
+### ISSUE-013：规划业务动作未落地为 Demo 页面操作按钮
+
+- 状态：`已修复`
+- 优先级：`P0`
+- 发现日期：`2026-06-16`
+- 复现任务：`20260616094630-40b7d690`
+- 发现位置：任务详情页规划版本 v3 与在线 Demo 审核中心页面。
+- 用户反馈：
+  - v3 规划中明确提出审核中心需要行级审核入口、快速审核抽屉和审核详情页操作按钮。
+  - 在线 Demo 页面中未看到“通过 / 驳回 / 转交 / 退回补充”等审核操作按钮。
+- 排查结论：
+  - `planning_versions/v3.json` 与当前 `planning.json` 已包含 `PUT /api/audit_center/{id}/approve`、`reject`、`quick_audit`、`transfer`、`return` 等接口。
+  - 任务确实按 v3 重新生成，生成项目文件时间晚于 v3 规划时间。
+  - 生成器原逻辑只生成通用 CRUD：前端操作列只有“编辑 / 删除”，前端 API 只有 page/get/create/update/delete，后端 Controller/Service 也只有 5 个通用接口。
+  - 因此问题不在 Planner 或用户描述，而在 Project Generator 未读取 `planning.api_list` 里的业务动作。
+- 修复内容：
+  - `backend/app/project_generator.py` 新增 `api_list` 业务动作解析，识别形如 `PUT /api/{module}/{id}/approve` 的模块动作接口。
+  - 为对应模块生成 `business_actions`，包含动作编码、中文标签、HTTP 方法、Java 方法名、前端函数名和 Spring Mapping 注解。
+  - 前端 API 文件新增业务动作方法，例如 `approveAuditCenter()`、`rejectAuditCenter()`、`quickAuditAuditCenter()`、`transferAuditCenter()`、`returnActionAuditCenter()`。
+  - Vue 页面操作列新增业务按钮，点击后弹出确认框并调用对应 API，成功后刷新列表。
+  - 后端 Service / ServiceImpl / Controller 新增对应动作方法，执行动作时写入可识别的状态、结果、意见、节点或操作类字段，并更新时间。
+  - Java 关键字防护：`return` 动作不会生成非法 Java 方法 `return()`，而是生成 `returnAction()`，接口路径仍保持 `/return`。
+  - 生成项目自带 Controller/Service 合约测试不再固定断言 5 个接口 / 方法，而是按规划业务动作动态增加。
+  - `metadata/*Operation.java` 与前端 config 的 `operations` 同步包含规划业务动作。
+- 验收标准：
+  - 含审核动作的规划生成项目后，审核中心页面操作列应包含“通过 / 驳回 / 快速审核 / 转交 / 退回补充”按钮。
+  - 前端 API 文件应生成对应业务动作函数。
+  - 后端 Controller 应生成对应 REST 接口，Service / ServiceImpl 应生成对应业务方法。
+  - 生成项目合约测试不能因业务接口超过 5 个而失败。
+  - 通用 CRUD 模块不受影响，仍保留查询、新增、编辑、删除能力。
+- 验证：
+  - `python -m unittest tests.test_project_generator -v`：通过。
+  - `python -m compileall app tests`：通过。
+  - `python -m unittest discover -s tests -v`：104 项通过。
+  - 临时产物检查：审核中心 Vue 页面已生成“通过 / 驳回 / 快速审核 / 转交 / 退回补充”按钮；前端 API 已生成 `approveAuditCenter` 与 `returnActionAuditCenter`；后端 Controller 已生成 `@PutMapping("/{id}/return")` 与 `returnAction()`。
+  - 受限环境中未完成生成项目 Maven 实测：当前 PowerShell 找不到 `mvn.cmd`，此前同类生成项目 Maven 验证由流水线和用户端端到端覆盖。
 
 ## 本轮验证结果
 
-- 后端：`python -m unittest discover -s tests -v`，86 项通过。
+- 后端：`python -m unittest discover -s tests -v`，104 项通过。
+- 临时生成项目：审核中心业务动作按钮、前端 API 和后端 Controller 文本检查通过。
 - 工厂前端：`npm.cmd run build` 通过。
 - 临时生成项目前端：包含顶部工作台、分析驾驶舱、主从详情、流程时间线和模块驾驶舱，`npm.cmd run build` 通过。
 - 临时生成项目后端：JDK 17 环境执行 Maven，79 项测试通过。
@@ -935,10 +1061,8 @@ POST /api/jobs/{job_id}/resume
 
 ## 当前后续工作
 
-1. **ISSUE-010**：Dashboard 页面视觉表达不足，待讨论具体图形组件和实现范围。
-2. **ISSUE-011**：源码材料原创性增强与业务化注释，待讨论实现范围和验收方式。
-3. 验证 Demo 超时回收、失败日志和运行中任务删除限制。
-4. 验收通过后提交本轮修改，并把提交号和发布结果补充到本文档。
+1. 验证 Demo 超时回收、失败日志和运行中任务删除限制。
+2. 验收通过后提交本轮修改，并把提交号和发布结果补充到本文档。
 
 ## 新窗口接手说明
 
