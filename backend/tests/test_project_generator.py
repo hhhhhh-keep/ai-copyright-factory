@@ -86,7 +86,7 @@ class ProjectGeneratorTests(unittest.TestCase):
             app_vue = (root / "frontend/src/App.vue").read_text(encoding="utf-8")
             self.assertIn("shell-top", app_vue)
             dashboard = (
-                root / "frontend/src/views/DashboardPage.vue"
+                root / "frontend/src/views/HomeDashboardPage.vue"
             ).read_text(encoding="utf-8")
             self.assertIn("analysis-workbench", dashboard)
             vehicle_page = (
@@ -117,6 +117,55 @@ class ProjectGeneratorTests(unittest.TestCase):
             self.assertIn("void approve(Long id);", service)
             self.assertIn("void quickAudit(Long id);", service)
             self.assertTrue((root / "THIRD_PARTY_NOTICES.md").exists())
+
+    def test_dashboard_module_does_not_collide_with_home_dashboard(self):
+        planning = {
+            "software_name": "Test Inventory",
+            "industry_name": "Industry",
+            "modules": [
+                {
+                    "key": "dashboard",
+                    "name": "数据驾驶舱",
+                    "description": "查看核心指标",
+                    "pages": ["驾驶舱"],
+                    "fields": ["名称", "状态", "更新时间"],
+                    "page_pattern": "dashboard",
+                },
+                {
+                    "key": "materials",
+                    "name": "物资台账",
+                    "description": "维护物资台账",
+                    "pages": ["台账列表"],
+                    "fields": ["物资名称", "库存数量", "状态"],
+                    "page_pattern": "table_crud",
+                },
+            ],
+            "database_tables": ["dashboard_metrics", "materials"],
+            "api_list": [],
+        }
+        with tempfile.TemporaryDirectory() as directory:
+            job_dir = Path(directory)
+            (job_dir / "planning.json").write_text(
+                json.dumps(planning, ensure_ascii=False),
+                encoding="utf-8",
+            )
+
+            generate_java_project(job_dir)
+
+            root = job_dir / "generated_project"
+            router = (root / "frontend/src/router.js").read_text(encoding="utf-8")
+            self.assertTrue((root / "frontend/src/views/HomeDashboardPage.vue").exists())
+            self.assertTrue((root / "frontend/src/views/DashboardPage.vue").exists())
+            self.assertIn("import HomeDashboardPage", router)
+            self.assertEqual(
+                router.count("import DashboardPage from './views/DashboardPage.vue'"),
+                1,
+            )
+            self.assertIn("{path: '/', name: 'home', component: HomeDashboardPage}", router)
+            self.assertIn(
+                "{path: '/dashboard', name: 'dashboard', component: DashboardPage}",
+                router,
+            )
 
 
 if __name__ == "__main__":

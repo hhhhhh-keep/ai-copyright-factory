@@ -1,3 +1,4 @@
+import base64
 import json
 import tempfile
 import unittest
@@ -6,9 +7,17 @@ from pathlib import Path
 from docx import Document
 
 from app.compliance import build_compliance_report
+from app.workflow import generate_documents, generate_source_document
 
 
 class ComplianceTests(unittest.TestCase):
+    PNG_BYTES = base64.b64decode(
+        "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVQIHWP4z8DwHwAFgAI/ScL6kQAAAABJRU5ErkJggg=="
+    )
+
+    def _write_image(self, path: Path) -> None:
+        path.write_bytes(self.PNG_BYTES)
+
     def test_consistent_materials_score_full_points(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
@@ -22,6 +31,9 @@ class ComplianceTests(unittest.TestCase):
 
             planning = {
                 "software_name": "测试管理系统",
+                "description": "用于测试材料一致性检查。",
+                "software_type": "管理软件",
+                "target_users": "测试人员",
                 "modules": [
                     {
                         "key": "items",
@@ -30,6 +42,8 @@ class ComplianceTests(unittest.TestCase):
                         "fields": ["名称", "状态"],
                     }
                 ],
+                "database_tables": ["business_items"],
+                "api_list": ["GET /api/items", "POST /api/items"],
             }
             (root / "planning.json").write_text(
                 json.dumps(planning, ensure_ascii=False), encoding="utf-8"
@@ -44,23 +58,61 @@ class ComplianceTests(unittest.TestCase):
                 '@RequestMapping("/api/items") class ItemsController {}',
                 encoding="utf-8",
             )
-            for filename, text in [
-                ("设计说明书.docx", "测试管理系统 信息管理"),
-                ("用户操作手册.docx", "测试管理系统 信息管理"),
-                ("源代码材料.docx", "测试管理系统\n" + "code\n" * 100),
-                ("软件著作权申请信息表.docx", "测试管理系统"),
-            ]:
+            self._write_image(screenshots / "01-login.png")
+            self._write_image(screenshots / "02-dashboard.png")
+            self._write_image(screenshots / "03-信息管理-list.png")
+            self._write_image(screenshots / "04-信息管理-create.png")
+            (root / "screenshot_manifest.json").write_text(
+                json.dumps(
+                    {"screenshots": [
+                        {"kind": "login", "file": "01-login.png"},
+                        {"kind": "dashboard", "file": "02-dashboard.png"},
+                        {"kind": "module_list", "file": "03-信息管理-list.png", "module_key": "items"},
+                        {"kind": "module_create", "file": "04-信息管理-create.png", "module_key": "items"},
+                    ]},
+                    ensure_ascii=False,
+                ),
+                encoding="utf-8",
+            )
+            generate_documents({}, root)
+            generate_source_document(root)
+
+            report = build_compliance_report(root)
+            self.assertEqual(report["score"], 140, report["items"])
+            self.assertTrue(report["passed"])
+            self.assertEqual(report["grade"], "优秀")
+
+    def test_report_marks_missing_module_form_screenshot(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            project = root / "generated_project"
+            docs = root / "docs"
+            screenshots = root / "screenshots"
+            (project / "frontend/src").mkdir(parents=True)
+            (project / "backend/src/main/java/com/example/items").mkdir(parents=True)
+            docs.mkdir()
+            screenshots.mkdir()
+            planning = {"software_name": "测试管理系统", "modules": [{"key": "items", "name": "信息管理", "pages": ["信息列表"], "fields": ["名称"]}]}
+            (root / "planning.json").write_text(json.dumps(planning, ensure_ascii=False), encoding="utf-8")
+            (root / "code_stats.json").write_text('{"total_lines": 100}', encoding="utf-8")
+            (project / "frontend/src/App.vue").write_text("信息管理", encoding="utf-8")
+            (project / "backend/src/main/java/com/example/items/ItemsController.java").write_text('/api/items', encoding="utf-8")
+            for name in ("01-login.png", "02-dashboard.png", "03-信息管理-list.png"):
+                self._write_image(screenshots / name)
+            (root / "screenshot_manifest.json").write_text(json.dumps({"screenshots": [
+                {"kind": "login", "file": "01-login.png"}, {"kind": "dashboard", "file": "02-dashboard.png"},
+                {"kind": "module_list", "file": "03-信息管理-list.png", "module_key": "items"},
+            ]}), encoding="utf-8")
+            for filename, text in [("设计说明书.docx", "测试管理系统 信息管理 功能目标"), ("用户操作手册.docx", "测试管理系统 信息管理 4.1.2 操作步骤"), ("源代码材料.docx", "测试管理系统\n" + "code\n" * 100), ("软件著作权申请信息表.docx", "测试管理系统")]:
                 document = Document()
                 document.add_paragraph(text)
                 document.save(docs / filename)
-            (screenshots / "01-login.png").write_bytes(b"png")
-            (screenshots / "02-dashboard.png").write_bytes(b"png")
-            (screenshots / "03-信息管理.png").write_bytes(b"png")
 
             report = build_compliance_report(root)
-            self.assertEqual(report["score"], 100)
-            self.assertTrue(report["passed"])
-            self.assertEqual(report["grade"], "优秀")
+            item = next(item for item in report["items"] if item["key"] == "screenshot_feature_coverage")
+            self.assertFalse(item["passed"])
+            self.assertIn("信息管理", item["detail"])
+            self.assertFalse(report["passed"])
 
 
 if __name__ == "__main__":

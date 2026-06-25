@@ -1,7 +1,7 @@
 # AI 软著工厂 V1.0 - 问题与交接记录
 
 > 用途：跨 Codex 窗口保留项目现状、用户反馈、实现结论和验证结果。
-> 当前结论：ISSUE-002 至 ISSUE-013 已完成；其中 ISSUE-008 L1 已由 Claude 实施并通过 Codex 二次复审；REGRESSION-001 已完成验证。当前仍需回归：Demo 超时回收、失败日志和运行中任务删除限制。
+> 当前结论：ISSUE-002 至 ISSUE-020 已完成并通过 Codex 代码复审；ISSUE-021 已完成代码修正，仍待用户 Word/WPS 视觉验收；ISSUE-022 代码复审通过，仍建议用新任务截图做最终视觉确认；ISSUE-023、ISSUE-025、ISSUE-026、ISSUE-027 已完成代码复审；ISSUE-024 的记录已被后续 ISSUE-025/026 覆盖，不再等待“统一修改”。当前仍需回归：Demo 超时回收、失败日志和运行中任务删除限制。
 
 ## 问题处理约定
 
@@ -921,7 +921,7 @@ POST /api/jobs/{job_id}/resume
   - 新增 fingerprint 使用真实数据库表名的回归测试。
 - 验证：
   - `python -m unittest tests.test_dashboard_and_originality -v`：15 项通过。
-  - `python -m unittest discover -s tests -v`：104 项通过。
+  - `python -m unittest discover -s tests -v`：106 项通过。
   - `python -m compileall app tests`：通过。
 
 ### ISSUE-012：Planner 返回模块数与数据库表数不一致导致规划失败
@@ -1008,13 +1008,158 @@ POST /api/jobs/{job_id}/resume
 - 验证：
   - `python -m unittest tests.test_project_generator -v`：通过。
   - `python -m compileall app tests`：通过。
-  - `python -m unittest discover -s tests -v`：104 项通过。
+  - `python -m unittest discover -s tests -v`：106 项通过。
   - 临时产物检查：审核中心 Vue 页面已生成“通过 / 驳回 / 快速审核 / 转交 / 退回补充”按钮；前端 API 已生成 `approveAuditCenter` 与 `returnActionAuditCenter`；后端 Controller 已生成 `@PutMapping("/{id}/return")` 与 `returnAction()`。
   - 受限环境中未完成生成项目 Maven 实测：当前 PowerShell 找不到 `mvn.cmd`，此前同类生成项目 Maven 验证由流水线和用户端端到端覆盖。
 
+### ISSUE-014：Code Enhancer 超时回退与页面展示误导
+
+- 状态：`已修复`
+- 优先级：`P0/P1`
+- 发现日期：`2026-06-18`
+- 复现任务：`20260616115614-c4682c22`
+- 用户反馈：
+  - 任务进度区长期显示 `Code Enhancer：template（已回滚模板）`，用户难以判断是任务失败、增强失败，还是主动使用固定模板。
+  - 多个 `auto` 代码生成任务都显示 template，容易误解为所有任务整体失败。
+  - 需要把增强器拆成多轮，并在页面展示逐文件请求的简要节点。
+- 排查结论：
+  - 复现任务本身没有失败，运行验证已通过，任务停在 `awaiting_demo_review`；失败的是可选的 AI Code Enhancer。
+  - `status.json` 与 `enhancement.json` 记录 `actual_mode=template`，`fallback_reason=timeout: The read operation timed out`。
+  - 原实现复用 `AI_PLANNER_TIMEOUT=60`，没有独立配置 `AI_CODEGEN_TIMEOUT`；同时一次请求要求模型返回多个完整文件，MiniMax-M3 在该形态下容易超时。
+- 修复内容：
+  - `backend/app/enhancer.py` 改为逐文件多轮增强，当前顺序为 `frontend/src/App.vue`、`frontend/src/style.css`、`README.md`。
+  - `App.vue` 允许做壳层视觉增强，但必须保留模块路由入口和 `<router-view />`；`router.js` 和 `views/*` 归固定生成器所有，Code Enhancer 不允许覆盖。
+  - 每轮请求只传入当前目标文件，要求模型只返回一个文件，降低单次 JSON 响应过长导致的超时概率。
+  - 增强前统一备份允许修改的文件；任一文件增强失败时恢复备份，`auto` 模式回退稳定模板，`llm` 模式失败终止。
+  - Code Enhancer 默认超时提高到 `180s`，并在 `.env.example`、设置接口默认值和本地 `.env` 中明确 `AI_CODEGEN_MODEL=MiniMax-M3`、`AI_CODEGEN_TIMEOUT=180`。
+  - `workflow.py` 增加 `codegen_enhance_steps`，记录每个文件节点的 `pending/running/completed/failed`、文件名、展示名和摘要。
+  - 首页进度区改为展示“未启用 / AI 增强成功 / 失败已回退稳定模板”的明确状态，并展示逐文件节点：应用壳层、界面样式、项目说明。
+- 验收标准：
+  - `auto` 模式下 Code Enhancer 应逐文件请求，前端能看到逐文件状态节点。
+  - 增强失败时页面明确说明是“代码增强失败，已回退稳定模板”，不能暗示整个任务失败。
+  - `template` 模式下页面显示“代码增强未启用”，不能写成“已回滚模板”。
+  - 任一增强轮失败后必须恢复增强前文件，避免半增强状态进入后续 Maven/npm 验证。
+- 验证：
+  - `python -m unittest tests.test_enhancer -v`：3 项通过。
+  - `python -m compileall app tests`：通过。
+  - `python -m unittest discover -s tests -v`：105 项通过。
+  - `npm.cmd run build`：工厂前端构建通过。
+
+### ISSUE-015：Code Enhancer 覆盖 App.vue 路由壳层导致子菜单丢失具体页面功能
+
+- 状态：`已修复`
+- 优先级：`P0`
+- 发现日期：`2026-06-18`
+- 复现任务：`20260618093521-010b7e5e`
+- 用户反馈：
+  - 代码增强后，除首页外的子菜单都没有具体页面功能。
+- 排查结论：
+  - 当前任务 `codegen_actual_mode=llm`，增强成功执行。
+  - 增强后的 `generated_project/frontend/src/App.vue` 被模型整体重构，原本由固定生成器生成的 `<router-view />` 与模块路由入口被替换为 `activeModule` 占位页面。
+  - `views/*Page.vue`、`router.js`、模块 API 和配置文件仍存在；问题不是生成器没产出页面，而是增强器覆盖了应用壳层，导致子菜单不再进入真实路由页面。
+- 修复内容：
+  - 立即将复现任务的 `App.vue` 从 `.enhancer_backup/frontend/src/App.vue` 恢复到 `generated_project/frontend/src/App.vue`，再补入安全差异化壳层，使当前 Demo 保留视觉差异化并恢复真实模块页面。
+  - `frontend/src/App.vue` 继续允许增强，但新增结构守卫：增强内容必须保留模块路由入口和 `<router-view />`。
+  - `router.js` 和 `views/*` 不允许被 Code Enhancer 覆盖。
+  - 新增回归测试：模型若返回不含路由入口或 `<router-view />` 的 `App.vue`，必须被拒绝，`auto` 模式回退稳定模板，并保持原 App 壳层不变。
+- 验收标准：
+  - 新生成任务执行 Code Enhancer 后，子菜单仍应进入 `views/*Page.vue` 的具体功能页面。
+  - `App.vue` 可以出现在 `codegen_changed_files`，但增强后的内容必须保留模块路由入口和 `<router-view />`。
+  - 逐文件节点显示“应用壳层”“界面样式”和“项目说明”。
+  - 模型返回破坏路由壳层的 `App.vue` 时，增强器拒绝写入并触发回退。
+- 验证：
+  - `python -m unittest tests.test_enhancer -v`：3 项通过。
+
+### ISSUE-016：工厂后端轮询任务状态时因 UTF-8 BOM 持续 ASGI 500
+
+- 状态：`已修复`
+- 优先级：`P0`
+- 发现日期：`2026-06-18`
+- 复现任务：`20260618093521-010b7e5e`
+- 用户反馈：
+  - 后端日志一直刷 `Exception in ASGI application`。
+- 排查结论：
+  - 生成项目 Spring Boot / Vite 日志正常，异常来自工厂 FastAPI 后端。
+  - 前端持续轮询 `GET /api/jobs/20260618093521-010b7e5e`，接口返回 500。
+  - 堆栈定位到 `workflow._json_read()` 使用 `encoding="utf-8"` 读取 `status.json`，但该文件被 PowerShell 写成 UTF-8 BOM，触发 `JSONDecodeError: Unexpected UTF-8 BOM`。
+- 修复内容：
+  - 立即将复现任务的 `status.json` 和 `enhancement.json` 转回无 BOM UTF-8，接口恢复 200。
+  - `workflow._json_read()` 改为 `encoding="utf-8-sig"`，兼容带 BOM 和不带 BOM 的 JSON 文件。
+  - 新增回归测试：`get_job()` 能读取带 UTF-8 BOM 的 `status.json`。
+- 验收标准：
+  - `GET /api/jobs/{job_id}` 和 `GET /api/jobs/{job_id}/demo` 返回 200。
+  - 带 BOM 的历史任务 JSON 不应导致 ASGI 500 刷屏。
+- 验证：
+  - `GET /api/jobs/20260618093521-010b7e5e`：200。
+  - `GET /api/jobs/20260618093521-010b7e5e/demo`：200。
+  - `python -m unittest tests.test_workflow_order -v`：5 项通过。
+  - `python -m unittest discover -s tests -v`：106 项通过。
+
+### ISSUE-017：Code Enhancer 返回坏 JSON / 过载 / 读超时导致增强阶段失败
+
+- 状态：`已修复容错；强制 llm 模式仍按设计失败`
+- 优先级：`P0`
+- 发现日期：`2026-06-18`
+- 复现任务：`20260618093521-010b7e5e`
+- 用户反馈：
+  - 页面在“AI 增强项目代码”阶段报 `JSONDecodeError: Expecting property name enclosed in double quotes`。
+  - 后续恢复时 MiniMax 出现 `HTTP 529 overloaded` 和 `socket.timeout: The read operation timed out`。
+- 排查结论：
+  - `JSONDecodeError` 来自 Code Enhancer 对模型返回内容的解析失败，不是规划阶段错误，也不是 ISSUE-016 的 BOM 读文件问题。
+  - 当前任务的 `codegen_mode=llm`，属于“强制 AI 增强（失败则终止）”；因此外部模型持续过载或超时时不会自动回滚模板。
+  - “AI 增强（失败自动回滚模板）”对应的是 `codegen_mode=auto`，该模式下增强失败会恢复增强前文件并继续后续验证。
+- 修复内容：
+  - `_request_enhancement()` 在解析/校验失败时，会把上一轮响应和错误摘要发回模型，自动要求严格 JSON 修复一次。
+  - 对 `HTTP 429/500/502/503/504/529` 增加最多 3 次重试。
+  - 对 `URLError`、`TimeoutError` 和 `socket.timeout` 增加最多 3 次重试，避免读超时变成未捕获异常刷屏。
+  - `auto` 模式改为逐文件隔离失败：某个文件增强或结构校验失败时只恢复该文件，并继续尝试后续文件，避免 `App.vue` 被拦截后直接跳过 `style.css` 和 `README.md`。
+  - 前端状态区支持“部分增强完成”文案；当部分文件增强成功、部分文件回退时，不再显示成全量成功或全量失败。
+  - 保留 `llm` 模式语义：强制 AI 增强失败时任务进入 `failed`；需要自动回滚时应选择 `auto` 模式。
+- 验收标准：
+  - 模型首次返回非 JSON，第二次修复为合法 JSON 时增强应继续。
+  - 模型服务短时 529 或读超时后恢复，增强应自动重试成功。
+  - 模型持续不可用时，后端应记录明确错误，不应出现未处理 ASGI 异常刷屏。
+  - `auto` 模式下 App.vue 增强不合格时，必须恢复 App.vue，但仍继续尝试增强 style.css 和 README。
+  - `auto` 模式失败回滚模板，`llm` 模式失败终止任务，两者页面文案和状态必须保持一致。
+- 验证：
+  - `python -m unittest tests.test_enhancer -v`：6 项通过。
+  - `python -m compileall app tests`：通过。
+  - 当前任务在 `llm` 模式下重试后仍因外部模型读超时失败，属于强制模式的预期失败；如需继续生成，应重新选择 `auto` 或 `template` 模式再跑。
+
+### ISSUE-018：收敛 Code Enhancer 边界，避免 App.vue 破坏路由并降低 CSS 请求体
+
+- 状态：`已修复`
+- 优先级：`P0`
+- 发现日期：`2026-06-18`
+- 复现任务：`20260618105236-2bf095bf`
+- 用户反馈：
+  - 早期 Code Enhancer 能生成明显差异化 UI，但后来频繁失败。
+  - 曾出现增强后除首页外子菜单没有具体页面功能。
+  - `style.css` 步骤容易卡很久，怀疑请求和响应过大导致模型耗时。
+- 排查结论：
+  - `App.vue` 文件本身不大，失败主因不是请求体过大，而是整文件交给 LLM 重写后结构不可控，容易破坏 `<router-view />`、路由入口或返回非严格 JSON。
+  - `style.css` 接近万字符，完整文件输入与完整文件输出确实容易造成模型响应慢和超时。
+  - README 文档增强在同类任务中成功，说明不是模型整体不可用，而是不同文件的增强边界需要区分。
+- 修复内容：
+  - `ALLOWED_FILES` 移除 `frontend/src/App.vue`，`App.vue`、`router.js` 和 `views/*` 统一归固定生成器所有。
+  - 删除 App.vue 结构守卫路径，避免继续让模型整文件重写后再用粗粒度字符串规则拦截。
+  - `frontend/src/style.css` 改为追加样式块模式：请求只提供 CSS 前段上下文和 append-only 指令，模型只返回可追加的 CSS 片段，不再返回完整 CSS。
+  - 样式增强增加独立短超时：`AI_CODEGEN_STYLE_TIMEOUT=45`，最多 2 次尝试；文档增强为 `AI_CODEGEN_DOC_TIMEOUT=90`，避免可选增强长时间阻塞主流程。
+  - 外部 Code Enhancer API 调用改为子进程硬超时：超过预算后直接终止请求子进程，避免 Windows/SSL read 阶段不受 `urllib` timeout 约束而卡住 worker。
+  - `README.md` 继续保留 LLM 完整文档增强。
+  - 单测调整为验证 Code Enhancer 不请求 App.vue、CSS 追加不覆盖原样式、README 仍可增强。
+- 验收标准：
+  - Code Enhancer 请求顺序应为 `frontend/src/style.css`、`README.md`，不包含 `frontend/src/App.vue`。
+  - 增强后 App.vue 内容保持固定生成器输出，子菜单仍进入真实路由页面。
+  - CSS 增强应保留原 CSS，并在末尾追加增强块。
+  - README 增强仍可正常执行。
+- 验证：
+  - `python -m unittest tests.test_enhancer -v`：7 项通过。
+
 ## 本轮验证结果
 
-- 后端：`python -m unittest discover -s tests -v`，104 项通过。
+- 后端：`python -m unittest discover -s tests -v`，110 项通过。
+- Code Enhancer：`python -m unittest tests.test_enhancer -v`，7 项通过，覆盖逐文件请求顺序、单文件响应约束、不请求 `App.vue`、增强恢复、坏 JSON 修复、HTTP 529 重试、读超时重试和子进程硬超时后继续后续文件。
 - 临时生成项目：审核中心业务动作按钮、前端 API 和后端 Controller 文本检查通过。
 - 工厂前端：`npm.cmd run build` 通过。
 - 临时生成项目前端：包含顶部工作台、分析驾驶舱、主从详情、流程时间线和模块驾驶舱，`npm.cmd run build` 通过。
@@ -1064,6 +1209,91 @@ POST /api/jobs/{job_id}/resume
 1. 验证 Demo 超时回收、失败日志和运行中任务删除限制。
 2. 验收通过后提交本轮修改，并把提交号和发布结果补充到本文档。
 
+### ISSUE-021：软著材料图文覆盖、版式规范与说明深度不足
+
+- 状态：`代码修正完成，待用户视觉验收`。
+- 实现：截图从“每模块一张、仅首个模块有表单”改为每个模块的功能页和新增/编辑表单，并写入 `screenshot_manifest.json`；设计说明书与用户操作手册按功能单元插入真实截图、图题、字段/API信息和处理说明。第二阶段统一正文、标题、表格、图题、页眉页脚和代码样式；页码改为 Word/WPS 兼容的复合 PAGE 域；源码材料排除压缩 CSS 并过滤生成标记；用户手册取消四格流程表，改为逐条可执行操作说明。
+- 合规：新增对功能截图清单、DOCX 插图数量、模块操作说明深度、源码生成标记、页码域和统一正文样式的检查。
+- 验证：ISSUE-021 focused backend tests 通过；源码材料不再插入固定 50 行硬分页，DOCX XML 检查确认无显式 `w:type="page"` 分页符；临时材料结构检查确认三份核心 DOCX 均有宋体正文、PAGE 域、"第 1 页"文本回退，用户手册无流程表，源码材料无 AI 标记；工厂前端构建通过。最终仍需用户在 Word/WPS 打开新材料做视觉验收。详见 `docs/ISSUE-021.md`。
+
+### ISSUE-022：截图抓拍时机早于 Element Plus 对话框动画完成
+
+- 状态：`代码复审通过，待真实任务截图视觉确认`
+- 优先级：`P1`
+- 发现日期：2026-06-23
+- 复现任务：待用户确认（用户提供截图：重点车辆档案管理 → 新增重点车辆档案管理 对话框呈半透明 loading 残影）
+- 复现方式：在生成项目 Demo 页面点击任意模块"新增"按钮，等待 `el-dialog` 出现后立即截图，可观察到对话框仍处于 fade in / scale in 动画中。
+- 现象（用户提供截图）：重点车辆档案管理 → 新增重点车辆档案管理 对话框明显是半透明、loading 蒙层尚未完全褪去。
+- 复现场景定位：`backend/app/workflow.py` `capture_screenshots()`。
+
+#### 实现结果（Claude 实施 2026-06-23，Codex 代码复审通过）
+
+**代码变更：**
+
+- `backend/app/workflow.py` 新增 `_wait_for_settle(page, kind)` 工具函数（5 类策略 + 默认兜底）：
+
+  | kind | 策略 |
+  | --- | --- |
+  | `login` | `wait_for_load_state("networkidle")` + 200ms 短休（让登录卡淡入完成） |
+  | `dashboard` | `wait_for_load_state("networkidle")` + 等待 `.kpi-card / .kpi-grid / .hero` 出现 |
+  | `list` | `wait_for_load_state("networkidle")` + 等待首行 `.el-table__row / .el-empty` + 250ms 让 loading 蒙层完全褪去 |
+  | `dialog` | 等待 `.el-dialog` 出现 → `wait_for_function` 检查 overlay `opacity >= 0.95` 且 wrapper transform 已归位（`matrix(1, 0, 0, 1, 0, 0)` 或 `none`）→ 失败 1 次后兜底 `wait_for_timeout(400)` → 再加 150ms 走 v-model 同步 |
+  | `dialog_close` | `wait_for_selector(".el-dialog", state="detached", timeout=4000)` → 150ms 短休 |
+
+  返回 `{"strategy": str, "duration_ms": int, "retried": bool}`，供 manifest 记录。
+
+- `capture_screenshots()` 全面接入 `_wait_for_settle`：
+  - 登录页 → `_wait_for_settle(page, "login")`
+  - Dashboard → `_wait_for_settle(page, "dashboard")`
+  - 每个模块列表 → `_wait_for_settle(page, "list")`
+  - 弹窗截图 → `_wait_for_settle(page, "dialog")`，失败重试一次
+  - 关闭弹窗 → `_wait_for_settle(page, "dialog_close")`
+
+- `screenshot_manifest.json` 每条记录新增 3 个字段：
+  - `wait_strategy`：对应的策略名（`login_idle` / `dashboard_idle` / `list_idle+row` / `dialog_anim` / `dialog_detached` / `dialog_timeout` / `none`）
+  - `duration_ms`：实际等待耗时
+  - `retried_after_fix`：仅表单对话筐步骤置位；True 表示 `wait_for_function` 首次失败、走 400ms 兜底
+
+- `capture_screenshots` 失败诊断：当 `wait_for_function` 持续 3 秒未到稳态时抛错（不静默），然后走 400ms 兜底；`retried_after_fix=True` 让 manifest 出现"首次未达稳态"的痕迹，方便人工复审。
+
+**测试：** `backend/tests/test_capture_screenshots.py` 新增 9 项专项测试：
+1. `test_login_kind_uses_networkidle_and_short_sleep`（验证 login 走 networkidle + 200ms）
+2. `test_dashboard_kind_waits_for_kpi`（验证 dashboard 选 KpiCard / kpi-grid / hero 之一）
+3. `test_list_kind_waits_for_row`（验证 list 等待首行 + 250ms）
+4. `test_dialog_kind_succeeds_on_first_try`（验证 dialog 一次成功时 `retried=False`）
+5. `test_dialog_kind_uses_wait_for_function_with_correct_script`（验证 dialog 首次失败时 `retried=True`，包含 overlay opacity 与 wrapper transform 校验）
+6. `test_dialog_close_waits_for_detached`（验证 dialog_close 等 detached）
+7. `test_unknown_kind_returns_none_strategy`（兜底）
+8. `test_result_contains_duration_and_strategy`（返回值结构）
+9. `test_manifest_includes_wait_strategy_and_duration`（manifest 写入 `wait_strategy` / `duration_ms` 字段，兼容 `module_create` 带 `retried_after_fix`）
+
+**整体验证：**
+- `python -m unittest discover -s tests`：129 项全过。
+- `npm.cmd run build`：通过，132.55 kB JS / 15.06 kB CSS。
+- `git diff --check`：exit 0。
+
+**非目标（已确认不改）：**
+- 不调整生成项目的 UI 组件（动画时长、过渡曲线）。
+- 不替换 Element Plus 主题或全局样式。
+
+**剩余观察项：**
+- 是否需要把 `duration_ms` 阈值告警加入 `compliance_report.json`（例如 `> 1500ms` 标黄），便于批跑时定位异常任务。
+- 真实 MiniMax 任务端到端截图仍建议补跑一次，确认弹窗视觉和整页蒙层效果。
+- `dialog_anim` 的 `wait_for_function` 超时（3s）是否需要可配置（目前硬编码）。
+
+#### 第二轮修正（2026-06-24，对话框整页截图蒙层只覆盖视口顶部）
+
+- 触发：用户复核截图反馈"下半部分明显有主页菜单跟子菜单重合在一起"。
+- 根因：dialog 截图仍走 `full_page=True`，但 Element Plus 的 `.el-overlay` 是 `position: fixed; inset: 0`，在 Playwright 整页截图里只会渲染在视口顶部那一段（~900px），视口下方的页面表格会原样进入图片，看上去就是"主页面菜单和对话框上下叠在一起"。
+- 修复：在 `capture_screenshots()` 截图前调用 `_stretch_overlay_to_page(page)`，用 JS 把 overlay 改成 `position: absolute; top: 0; left: 0; right: 0; width: 100%; height: document.documentElement.scrollHeight + 'px'; minHeight: 100vh`。这样蒙层覆盖整页，主页面表格被一并压暗，dialog 本身仍由 Element Plus 居中。
+- manifest 字段：在 `module_create` 条目新增 `overlay_full_page: bool`，记录本次截图前是否成功把蒙层改为 absolute + 整页高度。`false` 时说明页面里没有 `.el-overlay`（dialog 未就绪 / 已关闭），需人工复审。
+- 对话框截图保持 `full_page=True`，不切到视口截图，避免长 dialog（14+ 字段）底部被裁掉。
+- 测试：在 `backend/tests/test_capture_screenshots.py` 新增 `StretchOverlayTests`，共 2 项：
+  1. `test_returns_false_when_overlay_missing`：DOM 无 `.el-overlay` 时返回 `False`，evaluate 仍被调用。
+  2. `test_returns_true_when_overlay_present`：DOM 有 overlay 时返回 `True`，并校验脚本包含 `position: absolute` + `scrollHeight` + `100%`。
+- 验证：后端 `131` 项单测（129 原有 + 2 新增）通过；工厂前端 `npm.cmd run build` 通过；`git diff --check` exit 0。
+- Codex 代码复审：`tests.test_capture_screenshots` 通过；真实 MiniMax 端到端截图仍建议补跑。
+
 ## 新窗口接手说明
 
 新会话开始时，按以下顺序读取：
@@ -1074,3 +1304,303 @@ POST /api/jobs/{job_id}/resume
 4. `docs/FLOW.md`：当前代码的真实流程、状态机、接口和关键文件。
 
 新窗口必须以文件和 Git 工作区为准，不依赖聊天记忆。任何业务流程变化都应同步更新上述四份文档。
+
+### ISSUE-023：AI 增强项目代码几乎全部失败（jobId=20260623225150-e2f31fbd 复盘）
+
+- 状态：`已修正，Codex 代码复审通过`
+- 优先级：`P0`
+- 首次记录：2026-06-24
+- 复现任务：jobId=20260623225150-e2f31fbd（涉案车辆管理系统，`codegen_mode=auto`，`public_security` 行业）
+- 现象：5 个 UI 子步骤中 4 个 `failed`（shell / business / dashboard / responsive），仅 `theme` + `readme` 成功；`codegen_changed_files=["README.md"]`，`frontend/src/style.css` 实际未被 AI 修改但 `codegen_actual_mode="llm"`，语义失真。
+
+#### 失败根因（已逐个验证）
+
+| # | 子步骤 | 错误 | 根因 |
+|---|---|---|---|
+| 1 | shell | `未包含可校验的 CSS 选择器` | LLM 返回的 CSS 没有裸规则可解析 |
+| 2 | business | `Code enhancer API read timed out`（246s） | daemon Worker 走 urllib 直读，`urlopen(timeout=)` 只覆盖 connect，不覆盖 SSL read |
+| 3 | dashboard | `content > 8000 chars` | `UI_STEP_MAX_BLOCK_CHARS=8000` 过死，Pydantic 校验失败不重试 |
+| 4 | responsive | `未授权选择器: [':root', 'html', '.el-button', 'select', 'textarea']` | `UI_STEP_SELECTOR_HINTS["responsive"]` 不含 Element Plus 基础选择器 |
+
+共同病灶：`max_attempts=2` + `time.sleep(2/4s)` 无 jitter；`actual_mode` 语义 bug；enhance 失败未自动写 `.learnings/`；`worker_pid=39564` 在 `status=success` 后未收尾。
+
+#### 修复方案（Claude 实施 2026-06-24）
+
+- **P0-1 白名单补全**：`UI_STEP_SELECTOR_HINTS["responsive"]` 增补 `:root` / `html` / `select` / `textarea` / `.el-button` / `.el-button--primary` / `.el-input` / `.el-tag` / `.el-form` / `.el-dialog`；新增 `GLOBAL_UI_SELECTOR_HINTS = (":root", "--ai-")`，`_selector_matches_hints` 优先匹配，使 CSS 变量声明始终合法。
+- **P0-2 size 16000 + 精简重试**：`UI_STEP_MAX_BLOCK_CHARS` 默认从 8000 提升到 16000（`AI_CODEGEN_UI_BLOCK_MAX_CHARS` 可覆盖）；`_request_ui_step` 内 `UIStepBlock.model_validate` 抛 `ValidationError` 且含 `string_too_long` 时，向 LLM 发 1 条"精简后再发"反馈，二次失败才标 `failed`。
+- **P0-3 `_retry_with_backoff` helper**：抽 `_retry_with_backoff(operation, max_attempts=3, retry_callback)`，`time.sleep(min(2 ** attempt, 8) + random.uniform(0, 1))`；HTTP 4xx 中除 429 外直接抛；`call_api` 与 `_call_chat_json` 复用 helper。`max_attempts` 通过 `AI_CODEGEN_MAX_ATTEMPTS` 覆盖。
+- **P0-4 llm 容忍 1 步失败**：`enhance_project` 中 `if requested_mode == "llm" and len(ui_failures) >= 2` 才整体回滚并抛 `RuntimeError`；移除冗余的后置整体回滚。
+- **P0-5 `actual_mode` 新增 `partial`**：`EnhancementResult.actual_mode` 改为 `Literal["template", "llm", "partial"]`；`"frontend/src/style.css" in changed_files` 为真 → `llm`，否则若 README 改了 → `partial`，否则走 `template` fallback；`partial` 时 `summary` 末尾追加"（仅 README 由 AI 增强，UI/CSS 增强全部失败回滚到模板）"。
+- **P1-1 `.learnings/` 自动记录**：新建 `backend/app/learning.py`，提供 `classify_failure()` 与 `append_enhance_error()`；`_record_enhance_failure()` 在 `enhance_project` 三个 return 路径前各调用一次，try/except 兜底；文件命名 `ERRORS-YYYYMMDD-enhance.md`，编号跨会话单调递增；失败根因分类 8 类。
+- **P1-2 测试覆盖**：`backend/tests/test_enhancer.py` 新增 6 项 + 调整 1 项，共 18 项：test_responsive_allows_basic_selectors、test_dashboard_oversized_block_retries_with_trim_prompt、test_business_recovers_from_read_timeout_with_backoff、test_llm_mode_tolerates_one_ui_step_failure、test_actual_mode_partial_when_only_readme_changed、test_partial_failures_write_to_learnings；既有 `test_llm_mode_any_failure_rolls_back` 改为 `test_llm_mode_two_failures_rolls_back`。
+- **P1-3 worker 状态机告警**：`workflow.py continue_material_generation` 末尾若 `run_status=running` 但 `status=success`，打 warning log 提醒 demo 进程未显式停止；不主动 kill（用户可能正在浏览器看 demo）。
+
+#### 验证
+
+- `python -m unittest tests.test_enhancer`：18/18 全过。
+- `python -m unittest discover -s tests`：全量通过。
+- `npm.cmd run build`：通过。
+- `git diff --check`：exit 0。
+- 复用本 job planning 跑一次新任务，5 个 UI 子步骤 `status=completed` 数 ≥ 4，`codegen_actual_mode ∈ {llm, partial}`，`.learnings/ERRORS-YYYYMMDD-enhance.md` 含本任务失败条目（如全部成功则无）。
+
+#### 剩余风险
+
+- daemon Worker 下 SSL read timeout 仍未根本解决（246s 挂死靠 `max_attempts=3` + 退避 + 早失败缓解），完整 `multiprocessing` 改造留 ISSUE-023 L2 或 ISSUE-008 L2 统一处理。
+- 前端 `HomePage.vue` 需支持展示 `actual_mode=partial` 状态（与 `llm` / `template` 区分），后续 ISSUE 跟进。
+- `.learnings/` 并发写当前依赖单进程顺序写；如未来多 worker 并发，需要文件锁或 UUID 后缀去重。
+
+### ISSUE-024：白名单与生成器实际 class 失配，split_console / dashboard / Element Plus BEM 派生类未覆盖
+
+- 状态：`已由 ISSUE-025/026 覆盖并落地，不再等待统一修改`
+- 优先级：`P0`
+- 首次记录：2026-06-24
+- 关联：ISSUE-023（其白名单与 retry + actual_mode 修复已落地，但未覆盖本 ISSUE 暴露的"白名单与生成器实际 class 失配"问题）
+- 复现任务：`20260624095339-9d44c135`（涉案车辆管理系统，`public_security` 行业，`codegen_mode=auto`）
+
+#### 现象与影响
+
+5 个 UI 子步骤中 4 个 `failed`（shell / business / dashboard / responsive），仅 `theme` + `readme` 成功；任务**未真失败**（`status=awaiting_demo_review`、`run_validation` 全 passed、`run_status=stopped`），但 `codegen_changed_files=["README.md"]`，`frontend/src/style.css` 实际未被 AI 修改，`codegen_actual_mode="partial"`。
+
+| # | 子步骤 | attempts | duration_ms | 未授权选择器 |
+|---|---|---|---|---|
+| 1 | shell | 2 | 284422 | `*`, `html`, `@media(max-width:900px)`, `.shell-split`, `.shell-main` |
+| 2 | business | 2 | 550155 | `.el-card__header`, `.el-card__header span`, `.el-card__body`, `.el-button--success`, `.el-button--warning` |
+| 3 | dashboard | 2 | 931375 | `.kpi-grid`, `.kpi-trend`, `.kpi-trend-down .kpi-trend`, `.kpi-spark`, `.dashboard-row` |
+| 4 | responsive | 2 | 115000 | `.dashboard-row`, `.kpi-grid`(×2), `.module-dashboard`(×2) |
+
+`.learnings/ERRORS-20260624-enhance.md` 已自动记录（ERR-20260624-049，ISSUE-023 P1-1 生效）。
+
+#### 根因（已逐条与代码核对）
+
+- **根因 A 白名单与生成器实际 class 失配**：`project_generator.py` 实际生成 `.kpi-grid`、`.kpi-trend`、`.kpi-row`、`.dashboard-row`、`.shell-split`、`.shell-main`、`.module-dashboard`、`.status-row`、`.analysis-workbench` 等类，但 `UI_STEP_SELECTOR_HINTS["dashboard"]` 用的是已废弃的 `.metric-grid`、`.kpi-icon`、`.activity-panel` 等名称；`shell` 步 hint 缺 `.shell-split` / `.shell-main` / `@media`。
+- **根因 B `html` / `*` 未进 GLOBAL_UI_SELECTOR_HINTS**：当前仅 `(":root", "--ai-")`；LLM 表达"全局基础"几乎只能用 `html { font-family }` 或 `* { box-sizing }`。
+- **根因 C Element Plus BEM 派生类未覆盖**：白名单只允许基础类（`.el-card`、`.el-button`），不允许派生类（`.el-card__header`、`.el-card__body`、`.el-button--success` 等）；LLM 想覆盖 Element Plus 主题被拒。
+- **根因 D dashboard / responsive 步 hints 与实际生成器 class 不对称**：dashboard 步要写 `.kpi-trend`、`.dashboard-row`，但 hints 没列；responsive 步同样。
+
+#### 修复方案（已由 ISSUE-025/026 后续落地覆盖）
+
+- **P0-1 白名单与生成器 class 对齐**：按 `project_generator.py` grep 出的实际 class 重写 `UI_STEP_SELECTOR_HINTS` 4 步；`GLOBAL_UI_SELECTOR_HINTS` 补 `html` 与 `*`；`_selector_matches_hints` 的 `*` 匹配需特判（仅 `*` / `*::before` / `*::after` 等通用重置放行）。
+- **P0-2 系统化白名单来源**（长期方案）：新建 `backend/app/selector_audit.py`，由 `project_generator.py` 模板扫描生成实际 class 集合；CI 校验漂移并写 `.learnings/` 告警。**本次仅手动对齐**，自动化留后续。
+- **P0-3 LLM 越界防御强化**：在放宽白名单同时，`UI_STEP_FORBIDDEN_SELECTORS` 增 Vue 事件绑定 / JS 关键字 / 模板字符串等禁片；`_validate_ui_block` 加"内容字符集合"扫描。
+- **P1-1 `.learnings/` 修复建议链接修正**：`backend/app/learning.py` 写死的 `../docs/ISSUE-022.md` 链接（ISSUE-022 实际是截图抓拍时机）改为参数化（由调用方传 ISSUE 编号）。
+- **P1-2 测试覆盖**：`backend/tests/test_enhancer.py` 新增 7 项 + 调整 1 项：test_shell_allows_split_console_selectors、test_shell_allows_html_and_universal_selectors、test_shell_allows_at_media_query、test_business_allows_element_plus_bem_modifiers、test_dashboard_allows_real_generator_selectors、test_responsive_allows_dashboard_layout_selectors、test_forbidden_selectors_still_rejected_after_whitelist_expansion。
+- **P1-3 文档同步**：`AGENTS.md` / `README.md` / `docs/FLOW.md` / `ISSUE-020.md` 等「统一修改」后同步（用户硬性约束）。
+
+#### 约束与风险
+
+- `*` 放行可能被滥用写 `* { display:none }` 等破坏性规则：缓解靠禁片 + 字符集合扫描 + 实际 style.css 构建验证（破坏性 CSS 会让 `npm run build` 失败 → 自动回滚）。
+- Element Plus BEM 派生类前缀放行风险：建议用"前缀+通配符"（`.el-card__*`），但 Python 端 `_selector_matches_hints` 是字面前缀匹配，需扩展支持 `__*` 通配。
+- `project_generator.py` 改 class 名时白名单同步滞后：P0-2 系统化方案是长期解。
+- `actual_mode=partial` 仍是合法状态：本次修复目标是让 `actual_mode` 回到 `llm` 而非 `partial`，但 `partial` 的兜底语义本身正确（ISSUE-023 P0-5）。
+
+#### 验收标准
+
+- 复用本 job planning 跑一次新任务，5 个 UI 子步骤 `status=completed` 数 ≥ 4。
+- `codegen_actual_mode` 回到 `llm`；`frontend/src/style.css` 含 ≥ 3 个 `AI UI Enhancer:` marker。
+- `.learnings/ERRORS-YYYYMMDD-enhance.md` 不再出现 `whitelist_strict(shell|business|dashboard|responsive)` 条目（除非新类未覆盖）。
+- 既有 18 项 `test_enhancer.py` 测试不退；新增 7/7 通过。
+- 4 份交接文档（AGENTS.md / README.md / docs/ISSUES.md / docs/FLOW.md）与本 ISSUE 同步更新。
+
+完整根因 + 修复方案见 [ISSUE-024.md](ISSUE-024.md)。
+
+### ISSUE-025：白名单仍漏 Element Plus 全家族 + 伪元素组合 + LLM 自创派生类
+
+- 状态：`已修正，Codex 代码复审通过`
+- 优先级：`P0`
+- 首次记录：2026-06-24
+- 关联：ISSUE-024（白名单与生成器实际 class 对齐，**仍有 3 类盲区**——Element Plus 其它组件未列、伪元素组合未特判、LLM 自创派生未启发式覆盖）
+- 复现任务：`20260624140839-03bb66f7`（涉案车辆管理系统，`public_security` 行业，`codegen_mode=auto`，`ui_plan.shell="top_workspace"`）
+
+#### 现象与影响
+
+ISSUE-024 落地后新回归：5 步 UI 中 `shell` + `theme` + `readme` 成功（ISSUE-024 修复生效），`business` / `dashboard` / `responsive` 3 步仍 `failed`。`codegen_actual_mode="llm"`（shell 步成功改了 style.css），但 style.css 实际只有 1/5 步成功追加。
+
+| # | 子步骤 | status | 未授权选择器 |
+|---|---|---|---|
+| 1 | theme | completed | - |
+| 2 | shell | completed | - |
+| 3 | business | failed | `.el-table--border::after`, `.el-pagination`, `.el-pagination .btn-prev`, `.el-pagination .btn-next`, `.el-pagination .el-pager li` |
+| 4 | dashboard | failed | `.m-trend-up`, `.dashboard-trend-card`, `.dashboard-task_dashboard`, `.pattern-dashboard` |
+| 5 | responsive | failed | `.page-heading`, `.page-heading h2`, `.page-heading .actions`, `.page-heading .actions .btn-primary`, `.page-heading .actions .btn-ghost` |
+
+`.learnings/ERRORS-20260624-enhance.md` 已自动记录 `ERR-20260624-122`。
+
+#### 根因
+
+- **A Element Plus 全家族遗漏**：ISSUE-024 P0-1 仅列 `.el-card--*` / `.el-button--*` / `.el-tag--*` / `.el-dialog--*`，**漏了** `.el-table--*` / 整个 `.el-pagination` 组件 / `.el-checkbox--*` / `.el-radio--*` / `.el-select--*` / `.el-tooltip` / `.el-message` / `.el-notification` / `.el-popover` / `.el-dropdown` / `.el-menu` / `.el-upload` / `.el-tabs` 等常见业务组件；以及 Element Plus 2.x 渲染 `<el-pagination>` 时注入的内部类 `.btn-prev` / `.btn-next` / `.el-pager`。
+- **B 派生类 + 伪元素组合**：`.el-table--border::after` 由"派生类 + 伪元素"组成；ISSUE-024 在 `_selector_matches_hints` 特判了 `*::before/after`，但前提是 `.el-table--*` 必须在 hints 里——实际漏列。
+- **C LLM 自创派生类**：`selector_audit.collect_real_selectors` 只扫生成器模板写入的 class，LLM 自由发挥的派生（`.dashboard-trend-card` / `.m-trend-up` / `.pattern-dashboard` / `.btn-primary` / `.btn-ghost`）不在生成器里；`merge_with_hints` 启发式关键字太窄。
+
+#### 修复方案（Claude 实施 2026-06-24）
+
+- **P0-1 业务步补 Element Plus 全家族 + 自定义按钮 + 模块派生通配**：
+  - `.el-table--*` / `.el-pagination` / `.el-pager` / `.btn-prev` / `.btn-next` / `.el-checkbox--*` / `.el-radio--*` / `.el-select--*` / `.el-tooltip` / `.el-message` / `.el-notification` / `.el-popover` / `.el-popper` / `.el-dropdown` / `.el-menu` / `.el-upload` / `.el-tabs`
+  - `.btn-primary` / `.btn-ghost` / `.btn-default` / `.btn-danger` / `.btn-success` / `.btn-warning` / `.btn-info` / `.btn-link` / `.btn-text`
+  - `.module-*` / `.task-*` / `.form-*` / `.page-heading` / `.actions`
+- **P0-2 dashboard 步补 LLM 派生通配**：`.dashboard-*` / `.m-*` / `.pattern-*` / `.trend-*` / `.stat-*` / `.metric-*` / `.el-card__*` / `.el-tag--*`。
+- **P0-3 responsive 步补 page-heading / actions / btn-***：`.page-heading` / `.actions` / `.btn-primary` / `.btn-ghost` / `.btn-default`。
+- **P0-4 selector_audit 关键字扩展**：business_keywords / dashboard_keywords / responsive_keywords 各加一组 LLM 派生关键字。
+- **P1 测试覆盖**：`backend/tests/test_enhancer.py` 新增 4 项（test_business_allows_pagination_and_pseudo_element / test_dashboard_allows_llm_derived_selectors / test_business_allows_custom_button_classes / test_responsive_allows_page_heading_and_actions），共 31 项全过。
+- **P2 文档同步**：AGENTS.md / README.md / docs/FLOW.md / ISSUE-020.md 同步加 ISSUE-025 章节。
+
+#### 约束与风险
+
+- 大幅放宽白名单（`.dashboard-*` / `.m-*` / `.pattern-*` 等）可能掩盖 prompt 越界，需配合 `_scan_css_chars` 字符扫描与 `UI_STEP_FORBIDDEN_SELECTORS` 禁片兜底。
+- 真实 LLM 仍可能写出"完全意料之外"的派生命名空间；当前缓解靠字符扫描 + 禁片 + 实际 `npm run build` 验证。
+- `selector_audit.audit_drift` 当前只在 `.learnings/` 写漂移告警，未在 CI 中定期执行。
+
+#### 验收标准
+
+- 复用本 jobId planning 跑一次新任务，5 个 UI 子步骤 `status=completed` 数 ≥ 4。
+- `codegen_actual_mode` 为 `"llm"`（不再是 `"partial"`）；`frontend/src/style.css` 含 ≥ 3 个 `AI UI Enhancer:` marker。
+- `.learnings/ERRORS-YYYYMMDD-enhance.md` 不再出现 `whitelist_strict(business)` / `whitelist_strict(dashboard)` / `whitelist_strict(responsive)` 条目（除非新类未覆盖）。
+- 既有 27 项 `test_enhancer.py` 测试不退；新增 4/4 通过。
+- 4 份交接文档（AGENTS.md / README.md / docs/ISSUES.md / docs/FLOW.md）与本 ISSUE 同步更新。
+
+完整根因 + 修复方案见 [ISSUE-025.md](ISSUE-025.md)。
+
+### ISSUE-026：workflow.py logger NameError + daemon SSL read timeout + CSS 空响应
+
+- 状态：`已修正，Codex 代码复审通过`
+- 优先级：`P0`
+- 首次记录：2026-06-24
+- 关联：ISSUE-023（P1-3 worker 状态机告警实施遗漏 logger 定义，埋 NameError 雷；P0-3 retry 未真正解决 daemon SSL read 挂死）
+- 复现任务：`20260624160110-58039b6d`（涉案车辆管理系统，`codegen_mode=auto`） + 用户进入"打包软著材料"阶段崩溃
+
+#### 现象与影响
+
+jobId=`20260624160110-58039b6d` 跑出 5 步 UI 增强结果：
+- theme / shell / dashboard completed
+- business failed（`RuntimeError: Code enhancer API read timed out`，1006s = 16 分钟）
+- responsive failed（`未包含可校验的 CSS 选择器`，LLM 返回 `@media{} {/* 注释 */}`）
+
+用户随后点"打包软著材料" → 触发 `workflow.continue_material_generation` → 末尾 `logger.warning(...)` 调用抛 **`NameError: name 'logger' is not defined`**，**直接阻断软著材料打包流程**。
+
+#### 根因（3 类独立 bug）
+
+- **A `workflow.py` logger NameError**：ISSUE-023 P1-3 在 `continue_material_generation` 末尾新增 `logger.warning(...)` 调用，但**未在模块顶部 `import logging` 也未定义 `logger`**。
+- **B daemon Worker 下 SSL read timeout 无法强制中断**：`urllib.request.urlopen(timeout=N)` 只覆盖 TCP connect，不覆盖 SSL read；jobId=20260624160110-58039b6d 的 business 步在 SSL read 挂死 1006s；`multiprocessing.Process` 在 daemon Worker 下被禁用。
+- **C LLM 多次返回空 CSS 时整步 failed 阻断任务**：`_request_ui_step` 在 `_validate_ui_block` 抛"未包含可校验的 CSS 选择器"时，`_enhance_ui_steps` 标 failed 并重试 2 次仍失败，最终阻断任务。
+
+#### 修复方案（Claude 实施 2026-06-24）
+
+- **P0-1 workflow.py logger NameError**：`import logging` + `logger = logging.getLogger(__name__)`。
+- **P0-2 daemon Worker 下 SSL read timeout**：第一版 `ThreadPoolExecutor + future.result(timeout)` 被 Codex 复审核出无法杀死后台线程，现改为独立 Python subprocess 执行 LLM HTTP 请求；主进程通过 `subprocess.run(..., timeout=AI_CODEGEN_TIMEOUT+10)` 做硬截止，超时会杀掉请求子进程并转 `RuntimeError("Code enhancer API read timed out (daemon worker, Ns wall-clock)")`。非 daemon 远端调用仍走 `multiprocessing` 硬超时，本地 `127.0.0.1/localhost` 直接走传输层 timeout。
+- **P0-3 LLM 空 CSS 响应 → skipped 而非 failed**：`UIStepResponse.block: Optional[UIStepBlock] = None` + `skip_reason`；`_request_ui_step` 在 `_validate_ui_block` 之前检查 `_css_rule_selectors(block.content)`，空 selectors → 返回 `UIStepResponse(block=None, skip_reason=...)`；`_enhance_ui_steps` 调用方标 `status="skipped"` 且 **`success=True`**（避免被下方 `if not success:` 覆盖为 failed）。
+- **P1 测试覆盖**：`backend/tests/test_enhancer.py` 新增/调整后共 35/35 全过：`test_workflow_logger_imported` / `test_daemon_worker_uses_transport_timeout_without_child_process` / `test_daemon_subprocess_error_is_reported` / `test_daemon_worker_read_timeout_bounded` / `test_empty_css_response_is_skipped`。
+- **P2 文档同步**：AGENTS.md / README.md / docs/FLOW.md / ISSUE-020.md / ISSUE-026.md（本文件）+ docs/ISSUES.md 末尾追加。
+
+#### 约束与风险
+
+- daemon 分支现在每个远端 LLM 请求会启动一个 Python 子进程，稳定性优先于性能；如果后续并发量上升，可再改为常驻受控 worker 池。
+- LLM 空响应是提示词工程问题，本 ISSUE 仅做"任务不被阻断"兜底，未强制重试要求返回 ≥1 个 CSS 规则。
+- `success=True` 在 skipped 分支的修复是**必要修补**，未来 `_enhance_ui_steps` 重构时要保留。
+
+#### 验收标准
+
+- 用户进入"软著材料打包"阶段不再抛 `NameError`。
+- daemon Worker 下 LLM API SSL read 挂死能在 12s wall-clock 窗口内被强制中断（不是 1006s 后）。
+- LLM 多次返回空 CSS 时 UI 子步骤标 `skipped` 而非 `failed`，任务不被阻断。
+- 既有 31 项测试不退；新增 3/3 通过。
+- 端到端 AI 增强代码流程 PASS（4 completed + 1 skipped，`actual_mode=llm`）。
+- 4 份交接文档与本 ISSUE 同步更新。
+
+完整根因 + 修复方案见 [ISSUE-026.md](ISSUE-026.md)。
+
+完整根因 + 修复方案见 [ISSUE-025.md](ISSUE-025.md)。
+
+### ISSUE-027：Planner 响应含 `<think>` 示例 JSON 时误提取局部对象
+
+- 状态：`已修正，Codex 代码复审通过`
+- 优先级：`P0`
+- 首次记录：2026-06-25
+- 复现任务：`20260625095657-0ed4e081`
+
+#### 现象与影响
+
+任务在“生成软件规划”阶段失败，`status.json` 报：
+
+```text
+PlannerValidationError: ValidationError: 8 validation errors for Planning
+software_name / description / software_type / modules / database_tables / api_list / screenshots / document_outline Field required
+```
+
+诊断文件 `planner_raw_repair.txt` 实际包含完整规划 JSON，但前置 `<think>` 推理文本里也包含一个小示例对象：
+
+```json
+{"detail_pattern": "workflow_timeline", "edit_pattern": "drawer"}
+```
+
+旧版 `_first_json_object()` 返回“第一个语法合法 JSON 对象”，导致提取到这个局部对象，再交给 `Planning.model_validate()` 时缺少全部规划必填字段。
+
+#### 根因
+
+JSON 容错提取只按语法合法性排序，没有按 Planner schema 形状排序。模型使用 `<think>` 或解释文本时，推理内容中的局部 JSON 会遮挡最终完整规划 JSON。
+
+#### 修复方案（Codex 实施 2026-06-25）
+
+- `backend/app/planner.py`：收集响应中的所有合法 JSON 对象；优先返回包含规划关键顶层字段的对象（`software_name` / `modules` / `database_tables` / `api_list` / `screenshots` / `document_outline` 等），没有规划形状对象时才回退到旧行为。
+- `backend/tests/test_planner.py`：新增两项回归测试：
+  - `<think>` 中的小 JSON 不应遮挡最终 Planning JSON。
+  - 首次校验失败后，修复响应含 `<think>` 示例 JSON 时，`build_planning()` 应成功提取最终规划。
+
+#### 验证结果
+
+- `python -m unittest tests.test_planner -v`：34 项通过。
+- 使用 `outputs/20260625095657-0ed4e081/planner_diagnostics/planner_raw_repair.txt` 做本地解析验证：成功解析为 5 个模块，首模块 `vehicle_archives`。
+- `git diff --check`：通过，仅 CRLF 提示。
+
+### ISSUE-028：最小任务 AI 代码增强端到端跑通专项
+
+- 状态：`已修正，端到端任务通过`
+- 优先级：`P0`
+- 首次记录：2026-06-25
+- 成功任务：`20260625123758-c69d4bcd`
+
+#### 目标
+
+按用户要求，用一个最小化任务开启 AI 代码增强，从规划、项目生成、AI 增强、运行验证、在线 Demo、自动截图、文档生成、合规检查到 ZIP 打包完整跑通；过程中遇到阻塞直接定位、修复、记录，不停在中途等待人工决策。
+
+#### 本轮暴露并修复的问题
+
+- **生成项目前端路由冲突**：当 LLM 规划出 `module.key = dashboard` 时，生成器同时创建首页 `DashboardPage.vue` 与业务模块 `DashboardPage.vue`，导致 Vite 报 `Identifier 'DashboardPage' has already been declared`。已将首页组件改为 `HomeDashboardPage.vue`，根路由 name 改为 `home`，并新增回归测试。
+- **daemon Worker 子进程 JSON/Unicode 失败**：MiniMax 响应里可能包含孤立 surrogate 或 stdout 混入调试行，daemon 子进程 JSON 输出会解析失败。已新增 `_sanitize_json_strings()` 与 `_loads_last_json_object()`，子进程 payload 使用 `ensure_ascii=True`，只解析最后一行 JSON。
+- **Code Enhancer 重试倍增导致长时间卡住**：原逻辑外层 UI step retry 与内层传输 retry 叠加，单个 UI 步骤可能变成多轮重复长请求。已收敛 `_call_chat_json()` 的传输重试边界，JSON 修复只追加一次修复请求，UI 子步骤 `max_attempts` 降为 1。
+- **UI 增强大上下文导致 style 步骤超时**：已压缩 UI 子步骤 prompt，只传必要 scope hints 与主题 token，移除大段 CSS tail 依赖。
+- **LLM UI 步骤远端超时/坏 JSON 阻断任务**：在远端超时、硬超时、JSON 解析失败等可恢复错误下，UI 子步骤会使用由 LLM theme token 派生的本地稳定 CSS fallback，并通过同一选择器白名单校验；选择器越权、Vue/JS 注入等安全错误仍保持失败。
+- **运行验证 npm install 超时**：生成项目存在 `node_modules` 时跳过重复安装；需要安装时使用 `npm install --no-audit --no-fund --prefer-offline`，超时由 `NPM_INSTALL_TIMEOUT` 控制，默认 600 秒。
+- **Windows status.json 读取瞬时 PermissionError**：状态轮询 `_json_read()` 对 `PermissionError` 做短暂重试，避免 Worker 写入期间前端轮询触发 ASGI 500。
+- **本地配置规划超时过低**：当前 MiniMax 配置已通过设置接口同步为 `AI_PLANNER_TIMEOUT=180`、`AI_CODEGEN_TIMEOUT=240`，避免新任务在规划阶段因 60 秒默认值提前失败。
+
+#### 最终验收结果
+
+成功任务 `20260625123758-c69d4bcd`：
+
+- `status=success`，`progress=100`，`failed_stage=null`。
+- `codegen_mode=llm`，`codegen_actual_mode=llm`。
+- AI 增强节点：`theme completed`、`shell skipped`、`business completed`、`dashboard completed`、`responsive completed`、`readme completed`。其中 `shell skipped` 是 LLM 返回空 CSS 后的受控跳过，不是失败。
+- 运行验证：`frontend_build=passed`、`backend_structure=passed`、`maven_test=passed`。
+- 截图：12 张。
+- 文档：`源代码材料.docx`、`用户操作手册.docx`、`设计说明书.docx`、`软件著作权申请信息表.docx`、`软著材料合规检查报告.docx`。
+- 产物：`copyright_package.zip` 约 5.1 MB，`generated_project.zip` 约 125 KB。
+- 在线 Demo 已启动：`demo_url=http://127.0.0.1:65381`，`swagger_url=http://127.0.0.1:65380/swagger-ui/index.html`。
+
+#### 验证命令
+
+```powershell
+cd "C:\Users\whn\Documents\软著\backend"
+python -m unittest tests.test_enhancer tests.test_project_generator tests.test_workflow_order -v
+
+cd "C:\Users\whn\Documents\软著"
+git diff --check
+```
+
+验证结果：
+
+- 后端专项测试 48 项通过。
+- `git diff --check` 通过，仅有既有 CRLF 换行提示。
+
+#### 剩余风险
+
+- `shell` UI 子步骤在最终成功任务中因 LLM 空 CSS 被标记为 `skipped`。该状态不会阻断任务，也不会回滚整体 AI 增强；后续如果要追求五步全部 completed，需要继续优化 shell 步 prompt。
+- 当前 fallback 仅处理远端超时、硬超时和坏 JSON 等可恢复错误；选择器越权和非 CSS 注入仍会失败，这是保留的安全边界。

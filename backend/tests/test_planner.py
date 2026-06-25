@@ -215,6 +215,25 @@ class ExtractJsonTests(unittest.TestCase):
         result = _extract_json(text)
         self.assertEqual(result["software_name"], "教学管理系统")
 
+    def test_think_block_schema_fragment_does_not_shadow_planning(self):
+        """job 20260625095657: <think> 里的小 JSON 不能遮住最终规划。"""
+        fragment = json.dumps(
+            {"detail_pattern": "workflow_timeline", "edit_pattern": "drawer"},
+            ensure_ascii=False,
+        )
+        text = (
+            "<think>示例：\n"
+            + fragment
+            + "\n现在输出修复后的完整规划。</think>\n"
+            + json.dumps(VALID_PLANNING, ensure_ascii=False)
+        )
+
+        result = _extract_json(text)
+
+        self.assertEqual(result["software_name"], "教学管理系统")
+        self.assertIn("modules", result)
+        self.assertNotIn("detail_pattern", result)
+
 
 class PlanningSchemaTests(unittest.TestCase):
     def test_module_with_thirteen_fields_is_valid(self):
@@ -476,6 +495,33 @@ class BuildPlanningTests(unittest.TestCase):
         finally:
             _stop_server(server)
         self.assertEqual(len(result.planning.modules), 3)
+        self.assertEqual(len(_ScriptedHandler.requests_received), 2)
+
+    def test_repair_response_with_think_fragment_extracts_final_planning(self):
+        """修复响应含 `<think>` 示例 JSON 时，应提取最后的完整规划。"""
+        invalid = json.loads(json.dumps(VALID_PLANNING, ensure_ascii=False))
+        invalid["modules"][0]["detail_pattern"] = "tab_panel"
+
+        fragment = json.dumps(
+            {"detail_pattern": "workflow_timeline", "edit_pattern": "drawer"},
+            ensure_ascii=False,
+        )
+        repaired = (
+            "<think>需要把非法 detail_pattern 修正。示例："
+            + fragment
+            + "</think>\n"
+            + json.dumps(VALID_PLANNING, ensure_ascii=False)
+        )
+        server = _start_server(
+            [json.dumps(invalid, ensure_ascii=False), repaired]
+        )
+        try:
+            with _patched_env(server):
+                result = build_planning(_base_job())
+        finally:
+            _stop_server(server)
+
+        self.assertEqual(result.planning.modules[0].key, "students")
         self.assertEqual(len(_ScriptedHandler.requests_received), 2)
 
     def test_two_failures_raise(self):

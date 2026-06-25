@@ -1743,7 +1743,7 @@ def _vue_page(module: Dict[str, Any]) -> str:
         for action in actions
     )
     action_buttons = "\n".join(
-        f'            <el-button link type="success" @click="runBusinessAction(row, \'{action["code"]}\', \'{action["label"]}\')">{action["label"]}</el-button>'
+        f'            <el-button link type="success" :data-action="\'{action["code"]}\'" @click="runBusinessAction(row, \'{action["code"]}\', \'{action["label"]}\')">{action["label"]}</el-button>'
         for action in actions
     )
     if action_buttons:
@@ -1871,8 +1871,8 @@ onMounted(load)
         <el-table-column v-for="field in fields" :key="field.key" :prop="field.key" :label="field.label" min-width="140" />
         <el-table-column label="操作" width="{action_column_width}" fixed="right">
           <template #default="{{ row }}">
-            <el-button link type="primary" @click="openEdit(row)">编辑</el-button>
-            <el-button link type="danger" @click="remove(row)">删除</el-button>
+            <el-button link type="primary" data-action="edit" @click="openEdit(row)">编辑</el-button>
+            <el-button link type="danger" data-action="delete" @click="remove(row)">删除</el-button>
 {action_buttons}
           </template>
         </el-table-column>
@@ -2037,17 +2037,17 @@ export default request
         _write(frontend / f"src/config/{module['key']}.js", _frontend_config(module))
         _write(frontend / f"src/views/{pascal}Page.vue", _vue_page(module))
     _write(
-        frontend / "src/views/DashboardPage.vue",
+        frontend / "src/views/HomeDashboardPage.vue",
         _dashboard_vue(planning, menu),
     )
     _write(
         frontend / "src/router.js",
         "\n".join(imports)
-        + "\nimport DashboardPage from './views/DashboardPage.vue'\n"
+        + "\nimport HomeDashboardPage from './views/HomeDashboardPage.vue'\n"
         + f"""
 import {{ createRouter, createWebHistory }} from 'vue-router'
 const routes = [
-  {{path: '/', name: 'dashboard', component: DashboardPage}},
+  {{path: '/', name: 'home', component: HomeDashboardPage}},
   {",".join(routes)}
 ]
 export default createRouter({{history: createWebHistory(), routes}})

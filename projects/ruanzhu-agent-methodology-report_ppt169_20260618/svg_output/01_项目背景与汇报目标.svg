@@ -1,0 +1,78 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1280 720" width="1280" height="720">
+  <defs>
+    <radialGradient id="bgGlow01" cx="72%" cy="38%" r="60%">
+      <stop offset="0%" stop-color="#0B74FF" stop-opacity="0.32"/>
+      <stop offset="42%" stop-color="#061A36" stop-opacity="0.62"/>
+      <stop offset="100%" stop-color="#02050B"/>
+    </radialGradient>
+    <linearGradient id="neonLine01" x1="0%" y1="0%" x2="100%" y2="0%">
+      <stop offset="0%" stop-color="#11D7FF"/>
+      <stop offset="50%" stop-color="#2B7CFF"/>
+      <stop offset="100%" stop-color="#FF9E3D"/>
+    </linearGradient>
+    <linearGradient id="panel01" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#0D1C2E" stop-opacity="0.92"/>
+      <stop offset="62%" stop-color="#09111E" stop-opacity="0.84"/>
+      <stop offset="100%" stop-color="#D9F5FF" stop-opacity="0.20"/>
+    </linearGradient>
+    <filter id="blueGlow01" x="-30%" y="-30%" width="160%" height="160%">
+      <feGaussianBlur in="SourceAlpha" stdDeviation="7" result="blur"/>
+      <feFlood flood-color="#11D7FF" flood-opacity="0.65" result="glowColor"/>
+      <feComposite in="glowColor" in2="blur" operator="in" result="glow"/>
+      <feMerge>
+        <feMergeNode in="glow"/>
+        <feMergeNode in="SourceGraphic"/>
+      </feMerge>
+    </filter>
+    <filter id="orangeGlow01" x="-30%" y="-30%" width="160%" height="160%">
+      <feGaussianBlur in="SourceAlpha" stdDeviation="5" result="blur"/>
+      <feFlood flood-color="#FF9E3D" flood-opacity="0.55" result="glowColor"/>
+      <feComposite in="glowColor" in2="blur" operator="in" result="glow"/>
+      <feMerge>
+        <feMergeNode in="glow"/>
+        <feMergeNode in="SourceGraphic"/>
+      </feMerge>
+    </filter>
+  </defs>
+
+  <g id="background">
+    <rect width="1280" height="720" fill="#02050B"/>
+    <rect width="1280" height="720" fill="url(#bgGlow01)"/>
+    <path d="M-80,510 C160,330 300,260 530,292 C760,324 820,120 1088,66 C1180,48 1260,64 1360,116" fill="none" stroke="#12365F" stroke-width="2" stroke-opacity="0.55"/>
+    <path d="M-60,558 C178,356 318,302 536,332 C778,366 864,130 1114,84 C1202,68 1274,92 1352,150" fill="none" stroke="#0EA5E9" stroke-width="1.4" stroke-opacity="0.35"/>
+    <path d="M140,92 C270,16 426,28 520,122 C632,234 582,390 424,454 C290,508 156,440 128,330 C100,220 30,158 140,92 Z" fill="none" stroke="#11D7FF" stroke-width="5" stroke-opacity="0.85" filter="url(#blueGlow01)"/>
+    <path d="M190,72 C336,116 486,88 552,220 C614,344 500,470 356,438 C210,406 78,298 132,188 C154,142 164,102 190,72 Z" fill="none" stroke="#FF9E3D" stroke-width="3.5" stroke-opacity="0.75" filter="url(#orangeGlow01)"/>
+    <path d="M104,230 C210,62 420,38 540,176 C640,292 548,478 366,488 C202,498 84,382 104,230 Z" fill="none" stroke="#5EE7FF" stroke-width="2" stroke-opacity="0.65" filter="url(#blueGlow01)"/>
+    <rect x="0" y="0" width="1280" height="720" fill="#02050B" fill-opacity="0.30"/>
+  </g>
+
+  <g id="chrome">
+    <text x="48" y="42" font-family="'Microsoft YaHei', Arial, sans-serif" font-size="14" font-weight="700" fill="#E7F8FF" fill-opacity="0.75">AI COPYRIGHT FACTORY</text>
+    <text x="1168" y="42" text-anchor="end" font-family="'Microsoft YaHei', Arial, sans-serif" font-size="12" fill="#E7F8FF" fill-opacity="0.70">PRESENTATION 2026</text>
+    <rect x="40" y="676" width="1200" height="1" fill="#AEEBFF" fill-opacity="0.20"/>
+    <text x="48" y="704" font-family="'Microsoft YaHei', Arial, sans-serif" font-size="12" fill="#E7F8FF" fill-opacity="0.58">AI软著工厂 阶段汇报</text>
+    <text x="640" y="704" text-anchor="middle" font-family="'Microsoft YaHei', Arial, sans-serif" font-size="12" fill="#E7F8FF" fill-opacity="0.58">CONFIDENTIAL</text>
+    <text x="1232" y="704" text-anchor="end" font-family="'Microsoft YaHei', Arial, sans-serif" font-size="12" fill="#E7F8FF" fill-opacity="0.58">01</text>
+  </g>
+
+  <g id="title-block">
+    <text x="72" y="156" font-family="Georgia, 'Microsoft YaHei', serif" font-size="34" font-weight="700" fill="#83D9FF">2026</text>
+    <text x="72" y="198" font-family="'Microsoft YaHei', Arial, sans-serif" font-size="30" font-weight="700" fill="#FFFFFF">软著智能化流程汇报</text>
+    <line x1="72" y1="224" x2="338" y2="224" stroke="url(#neonLine01)" stroke-width="3" filter="url(#blueGlow01)"/>
+  </g>
+
+  <g id="main-title">
+    <text x="690" y="190" font-family="'Microsoft YaHei', Arial, sans-serif" font-size="18" font-weight="700" fill="#5EE7FF" letter-spacing="1">FROM DELIVERY TO METHODOLOGY</text>
+    <text x="690" y="250" font-family="'Microsoft YaHei', Arial, sans-serif" font-size="52" font-weight="800" fill="#FFFFFF">从软著制作到</text>
+    <text x="690" y="316" font-family="'Microsoft YaHei', Arial, sans-serif" font-size="52" font-weight="800" fill="#9FEAFF" filter="url(#blueGlow01)">智能体方法沉淀</text>
+    <text x="694" y="370" font-family="'Microsoft YaHei', Arial, sans-serif" font-size="19" fill="#D8EDFF" fill-opacity="0.82">以一次真实交付为抓手，沉淀可复制的智能化工作机制</text>
+  </g>
+
+  <g id="summary-panel">
+    <rect x="690" y="420" width="500" height="154" rx="22" fill="url(#panel01)" stroke="#62D7FF" stroke-width="1.4" stroke-opacity="0.75"/>
+    <rect x="716" y="442" width="118" height="32" rx="16" fill="#0EA5E9" fill-opacity="0.34" stroke="#8CEBFF" stroke-width="1"/>
+    <text x="775" y="464" text-anchor="middle" font-family="'Microsoft YaHei', Arial, sans-serif" font-size="15" font-weight="700" fill="#FFFFFF">汇报核心</text>
+    <text x="716" y="510" font-family="'Microsoft YaHei', Arial, sans-serif" font-size="23" font-weight="700" fill="#FFFFFF">不仅完成一次软著交付，</text>
+    <text x="716" y="548" font-family="'Microsoft YaHei', Arial, sans-serif" font-size="23" font-weight="700" fill="#FFFFFF">更沉淀<tspan fill="#65E6FF">标准流程</tspan>与<tspan fill="#FFB86B">方法资产</tspan>。</text>
+  </g>
+</svg>

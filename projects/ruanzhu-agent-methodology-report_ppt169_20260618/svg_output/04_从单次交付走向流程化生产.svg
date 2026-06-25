@@ -1,0 +1,71 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1280 720" width="1280" height="720">
+  <defs>
+    <linearGradient id="topGrad04" x1="0%" y1="0%" x2="100%" y2="0%">
+      <stop offset="0%" stop-color="#0B3A82"/>
+      <stop offset="100%" stop-color="#18A0A6"/>
+    </linearGradient>
+  </defs>
+
+  <g id="background">
+    <rect width="1280" height="720" fill="#F7F9FC"/>
+    <rect x="0" y="0" width="1280" height="6" fill="url(#topGrad04)"/>
+  </g>
+
+  <g id="header">
+    <text x="48" y="50" font-family="Georgia, 'Microsoft YaHei', serif" font-size="34" font-weight="700" fill="#1F2A44">从单次交付走向流程化生产</text>
+    <rect x="40" y="72" width="1200" height="46" rx="10" fill="#1F2A44"/>
+    <text x="64" y="101" font-family="'Microsoft YaHei', Arial, sans-serif" font-size="19" font-weight="700" fill="#FFFFFF">这套机制带来的核心变化，是把一次次分散交付升级成一条可管理、可复用的生产机制。</text>
+  </g>
+
+  <g id="chartArea">
+    <g id="card-standard">
+      <rect x="60" y="154" width="560" height="228" rx="18" fill="#FFFFFF" stroke="#D9E1EC" stroke-width="1.2"/>
+      <rect x="76" y="174" width="6" height="88" rx="3" fill="#0B3A82"/>
+      <use data-icon="chunk-filled/target" x="508" y="170" width="34" height="34" fill="#0B3A82"/>
+      <text x="100" y="206" font-family="'Microsoft YaHei', Arial, sans-serif" font-size="18" fill="#5B6780">管理价值 01</text>
+      <text x="100" y="246" font-family="'Microsoft YaHei', Arial, sans-serif" font-size="44" font-weight="700" fill="#1F2A44">标准化</text>
+      <text x="100" y="284" font-family="'Microsoft YaHei', Arial, sans-serif" font-size="16" fill="#5B6780">把离散动作串成统一流程，降低协同摩擦和重复沟通成本。</text>
+      <rect x="100" y="318" width="164" height="32" rx="16" fill="#EEF4FF"/>
+      <text x="182" y="339" text-anchor="middle" font-family="'Microsoft YaHei', Arial, sans-serif" font-size="14" font-weight="700" fill="#0B3A82">统一流程牵引</text>
+    </g>
+
+    <g id="card-control">
+      <rect x="660" y="154" width="560" height="228" rx="18" fill="#FFFFFF" stroke="#D9E1EC" stroke-width="1.2"/>
+      <rect x="676" y="174" width="6" height="88" rx="3" fill="#18A0A6"/>
+      <use data-icon="chunk-filled/shield" x="1108" y="170" width="34" height="34" fill="#18A0A6"/>
+      <text x="700" y="206" font-family="'Microsoft YaHei', Arial, sans-serif" font-size="18" fill="#5B6780">管理价值 02</text>
+      <text x="700" y="246" font-family="'Microsoft YaHei', Arial, sans-serif" font-size="44" font-weight="700" fill="#1F2A44">可控性</text>
+      <text x="700" y="284" font-family="'Microsoft YaHei', Arial, sans-serif" font-size="16" fill="#5B6780">关键质量点前置到规划确认与 Demo 审核，确保方向和结果都可控。</text>
+      <rect x="700" y="318" width="176" height="32" rx="16" fill="#EAFBFB"/>
+      <text x="788" y="339" text-anchor="middle" font-family="'Microsoft YaHei', Arial, sans-serif" font-size="14" font-weight="700" fill="#18A0A6">关键节点把关</text>
+    </g>
+
+    <g id="card-efficiency">
+      <rect x="60" y="414" width="560" height="228" rx="18" fill="#FFFFFF" stroke="#D9E1EC" stroke-width="1.2"/>
+      <rect x="76" y="434" width="6" height="88" rx="3" fill="#1F9D55"/>
+      <use data-icon="chunk-filled/bolt" x="508" y="430" width="34" height="34" fill="#1F9D55"/>
+      <text x="100" y="466" font-family="'Microsoft YaHei', Arial, sans-serif" font-size="18" fill="#5B6780">管理价值 03</text>
+      <text x="100" y="506" font-family="'Microsoft YaHei', Arial, sans-serif" font-size="44" font-weight="700" fill="#1F2A44">效率提升</text>
+      <text x="100" y="544" font-family="'Microsoft YaHei', Arial, sans-serif" font-size="16" fill="#5B6780">规划、生成、截图、文档和打包等多个环节显著自动化，释放人工精力。</text>
+      <rect x="100" y="578" width="176" height="32" rx="16" fill="#EEFBEF"/>
+      <text x="188" y="599" text-anchor="middle" font-family="'Microsoft YaHei', Arial, sans-serif" font-size="14" font-weight="700" fill="#1F9D55">大量动作自动化</text>
+    </g>
+
+    <g id="card-replication">
+      <rect x="660" y="414" width="560" height="228" rx="18" fill="#FFFFFF" stroke="#D9E1EC" stroke-width="1.2"/>
+      <rect x="676" y="434" width="6" height="88" rx="3" fill="#7C8FB3"/>
+      <use data-icon="chunk-filled/chart-bar" x="1108" y="430" width="34" height="34" fill="#7C8FB3"/>
+      <text x="700" y="466" font-family="'Microsoft YaHei', Arial, sans-serif" font-size="18" fill="#5B6780">管理价值 04</text>
+      <text x="700" y="506" font-family="'Microsoft YaHei', Arial, sans-serif" font-size="44" font-weight="700" fill="#1F2A44">可复制</text>
+      <text x="700" y="544" font-family="'Microsoft YaHei', Arial, sans-serif" font-size="16" fill="#5B6780">更换软件主题或行业场景后，仍可复用同一套流程、机制和质量控制逻辑。</text>
+      <rect x="700" y="578" width="164" height="32" rx="16" fill="#F1F4FA"/>
+      <text x="782" y="599" text-anchor="middle" font-family="'Microsoft YaHei', Arial, sans-serif" font-size="14" font-weight="700" fill="#7C8FB3">形成长期产线</text>
+    </g>
+  </g>
+
+  <g id="footer">
+    <text x="48" y="689" font-family="'Microsoft YaHei', Arial, sans-serif" font-size="12" fill="#8A96AA">四个价值共同指向：把经验型交付升级为机制型生产</text>
+    <text x="640" y="689" text-anchor="middle" font-family="'Microsoft YaHei', Arial, sans-serif" font-size="12" fill="#8A96AA">CONFIDENTIAL</text>
+    <text x="1232" y="689" text-anchor="end" font-family="'Microsoft YaHei', Arial, sans-serif" font-size="12" fill="#8A96AA">04</text>
+  </g>
+</svg>

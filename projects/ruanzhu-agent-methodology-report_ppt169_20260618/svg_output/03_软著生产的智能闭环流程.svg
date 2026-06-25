@@ -1,0 +1,106 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1280 720" width="1280" height="720">
+  <defs>
+    <linearGradient id="topGrad03" x1="0%" y1="0%" x2="100%" y2="0%">
+      <stop offset="0%" stop-color="#0B3A82"/>
+      <stop offset="100%" stop-color="#18A0A6"/>
+    </linearGradient>
+    <linearGradient id="phase1" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#0B3A82"/>
+      <stop offset="100%" stop-color="#1F5FBF"/>
+    </linearGradient>
+    <linearGradient id="phase2" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#1F5FBF"/>
+      <stop offset="100%" stop-color="#18A0A6"/>
+    </linearGradient>
+    <linearGradient id="phase3" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#18A0A6"/>
+      <stop offset="100%" stop-color="#1F9D55"/>
+    </linearGradient>
+    <linearGradient id="phase4" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#1F9D55"/>
+      <stop offset="100%" stop-color="#7C8FB3"/>
+    </linearGradient>
+    <linearGradient id="phase5" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#7C8FB3"/>
+      <stop offset="100%" stop-color="#0B3A82"/>
+    </linearGradient>
+  </defs>
+
+  <g id="background">
+    <rect width="1280" height="720" fill="#F7F9FC"/>
+    <rect x="0" y="0" width="1280" height="6" fill="url(#topGrad03)"/>
+  </g>
+
+  <g id="header">
+    <text x="48" y="50" font-family="Georgia, 'Microsoft YaHei', serif" font-size="34" font-weight="700" fill="#1F2A44">软著生产的智能闭环流程</text>
+    <rect x="40" y="72" width="1200" height="46" rx="10" fill="#1F2A44"/>
+    <text x="64" y="101" font-family="'Microsoft YaHei', Arial, sans-serif" font-size="19" font-weight="700" fill="#FFFFFF">我们把原来分散的人工作业，重构为“AI 提效、人工把关、系统留痕”的端到端闭环流程。</text>
+  </g>
+
+  <g id="chartArea">
+    <g id="chevrons">
+      <polygon points="70,190 250,190 282,236 250,282 70,282" fill="url(#phase1)"/>
+      <text x="168" y="228" text-anchor="middle" font-family="'Microsoft YaHei', Arial, sans-serif" font-size="18" font-weight="700" fill="#FFFFFF">软件信息输入</text>
+      <text x="168" y="252" text-anchor="middle" font-family="'Microsoft YaHei', Arial, sans-serif" font-size="12" fill="#E7EEFB">名称 / 类型 / 描述</text>
+
+      <polygon points="290,190 482,190 514,236 482,282 290,282 322,236" fill="url(#phase2)"/>
+      <text x="402" y="228" text-anchor="middle" font-family="'Microsoft YaHei', Arial, sans-serif" font-size="18" font-weight="700" fill="#FFFFFF">AI 自动生成规划</text>
+      <text x="402" y="252" text-anchor="middle" font-family="'Microsoft YaHei', Arial, sans-serif" font-size="12" fill="#EBFEFD">结构化 planning</text>
+
+      <polygon points="522,190 724,190 756,236 724,282 522,282 554,236" fill="url(#phase3)"/>
+      <text x="640" y="228" text-anchor="middle" font-family="'Microsoft YaHei', Arial, sans-serif" font-size="18" font-weight="700" fill="#FFFFFF">人工审核确认</text>
+      <text x="640" y="252" text-anchor="middle" font-family="'Microsoft YaHei', Arial, sans-serif" font-size="12" fill="#ECFFF3">先审规划再执行</text>
+
+      <polygon points="764,190 958,190 990,236 958,282 764,282 796,236" fill="url(#phase4)"/>
+      <text x="878" y="228" text-anchor="middle" font-family="'Microsoft YaHei', Arial, sans-serif" font-size="18" font-weight="700" fill="#FFFFFF">自动生成项目</text>
+      <text x="878" y="252" text-anchor="middle" font-family="'Microsoft YaHei', Arial, sans-serif" font-size="12" fill="#F4F7FC">并启动在线 Demo</text>
+
+      <polygon points="998,190 1186,190 1218,236 1186,282 998,282 1030,236" fill="url(#phase5)"/>
+      <text x="1106" y="228" text-anchor="middle" font-family="'Microsoft YaHei', Arial, sans-serif" font-size="18" font-weight="700" fill="#FFFFFF">人工验收后交付</text>
+      <text x="1106" y="252" text-anchor="middle" font-family="'Microsoft YaHei', Arial, sans-serif" font-size="12" fill="#EAF0FC">截图 / 文档 / 打包</text>
+    </g>
+
+    <g id="governance-band">
+      <rect x="72" y="314" width="1140" height="50" rx="14" fill="#FFFFFF" stroke="#D9E1EC" stroke-width="1"/>
+      <use data-icon="chunk-filled/target" x="108" y="328" width="20" height="20" fill="#0B3A82"/>
+      <text x="138" y="344" font-family="'Microsoft YaHei', Arial, sans-serif" font-size="16" font-weight="700" fill="#1F2A44">AI 负责提效</text>
+      <line x1="274" y1="338" x2="354" y2="338" stroke="#D9E1EC" stroke-width="2"/>
+      <use data-icon="chunk-filled/users" x="390" y="328" width="20" height="20" fill="#18A0A6"/>
+      <text x="420" y="344" font-family="'Microsoft YaHei', Arial, sans-serif" font-size="16" font-weight="700" fill="#1F2A44">人工负责把关</text>
+      <line x1="586" y1="338" x2="666" y2="338" stroke="#D9E1EC" stroke-width="2"/>
+      <use data-icon="chunk-filled/chart-bar" x="702" y="328" width="20" height="20" fill="#1F9D55"/>
+      <text x="732" y="344" font-family="'Microsoft YaHei', Arial, sans-serif" font-size="16" font-weight="700" fill="#1F2A44">系统负责留痕</text>
+      <line x1="888" y1="338" x2="968" y2="338" stroke="#D9E1EC" stroke-width="2"/>
+      <use data-icon="chunk-filled/shield" x="1004" y="328" width="20" height="20" fill="#7C8FB3"/>
+      <text x="1034" y="344" font-family="'Microsoft YaHei', Arial, sans-serif" font-size="16" font-weight="700" fill="#1F2A44">最终形成闭环</text>
+    </g>
+
+    <g id="detail-cards">
+      <rect x="72" y="404" width="268" height="188" rx="20" fill="#FFFFFF" stroke="#D9E1EC" stroke-width="1"/>
+      <text x="98" y="444" font-family="'Microsoft YaHei', Arial, sans-serif" font-size="18" font-weight="700" fill="#1F2A44">前段：规划与方向控制</text>
+      <text x="98" y="478" font-family="'Microsoft YaHei', Arial, sans-serif" font-size="14" fill="#5B6780">系统先把需求转成结构化规划，避免一开始就直接进入不可控生成。</text>
+      <text x="98" y="538" font-family="'Microsoft YaHei', Arial, sans-serif" font-size="14" fill="#0B3A82">关键词：先规划、再执行</text>
+
+      <rect x="362" y="404" width="268" height="188" rx="20" fill="#FFFFFF" stroke="#D9E1EC" stroke-width="1"/>
+      <text x="388" y="444" font-family="'Microsoft YaHei', Arial, sans-serif" font-size="18" font-weight="700" fill="#1F2A44">中段：自动生成与演示验证</text>
+      <text x="388" y="478" font-family="'Microsoft YaHei', Arial, sans-serif" font-size="14" fill="#5B6780">项目生成后必须先启动 Demo，再由人工进行可视化验收，确保结果符合预期。</text>
+      <text x="388" y="538" font-family="'Microsoft YaHei', Arial, sans-serif" font-size="14" fill="#18A0A6">关键词：先验收、后交付</text>
+
+      <rect x="652" y="404" width="268" height="188" rx="20" fill="#FFFFFF" stroke="#D9E1EC" stroke-width="1"/>
+      <text x="678" y="444" font-family="'Microsoft YaHei', Arial, sans-serif" font-size="18" font-weight="700" fill="#1F2A44">后段：材料生产自动化</text>
+      <text x="678" y="478" font-family="'Microsoft YaHei', Arial, sans-serif" font-size="14" fill="#5B6780">审核通过后，系统自动完成截图、文档、合规检查和打包，形成一体化交付链条。</text>
+      <text x="678" y="538" font-family="'Microsoft YaHei', Arial, sans-serif" font-size="14" fill="#1F9D55">关键词：材料自动生成</text>
+
+      <rect x="942" y="404" width="268" height="188" rx="20" fill="#FFFFFF" stroke="#D9E1EC" stroke-width="1"/>
+      <text x="968" y="444" font-family="'Microsoft YaHei', Arial, sans-serif" font-size="18" font-weight="700" fill="#1F2A44">全程：可追溯与可返工</text>
+      <text x="968" y="478" font-family="'Microsoft YaHei', Arial, sans-serif" font-size="14" fill="#5B6780">版本、审查、返工、恢复都留有记录，支持从一次任务沉淀成长期能力。</text>
+      <text x="968" y="538" font-family="'Microsoft YaHei', Arial, sans-serif" font-size="14" fill="#7C8FB3">关键词：全流程留痕</text>
+    </g>
+  </g>
+
+  <g id="footer">
+    <text x="48" y="689" font-family="'Microsoft YaHei', Arial, sans-serif" font-size="12" fill="#8A96AA">流程特征：AI提效 + 人工把关 + 系统留痕</text>
+    <text x="640" y="689" text-anchor="middle" font-family="'Microsoft YaHei', Arial, sans-serif" font-size="12" fill="#8A96AA">CONFIDENTIAL</text>
+    <text x="1232" y="689" text-anchor="end" font-family="'Microsoft YaHei', Arial, sans-serif" font-size="12" fill="#8A96AA">03</text>
+  </g>
+</svg>

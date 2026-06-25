@@ -1,0 +1,59 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1280 720" width="1280" height="720">
+  <defs>
+    <linearGradient id="titleGrad06" x1="0%" y1="0%" x2="100%" y2="0%">
+      <stop offset="0%" stop-color="#0B3A82"/>
+      <stop offset="100%" stop-color="#18A0A6"/>
+    </linearGradient>
+  </defs>
+
+  <g id="background">
+    <rect width="1280" height="720" fill="#F7F9FC"/>
+    <circle cx="1090" cy="140" r="150" fill="#18A0A6" fill-opacity="0.05"/>
+    <circle cx="160" cy="580" r="120" fill="#0B3A82" fill-opacity="0.04"/>
+  </g>
+
+  <g id="header">
+    <rect x="0" y="0" width="1280" height="8" fill="url(#titleGrad06)"/>
+    <text x="640" y="92" text-anchor="middle" font-family="Georgia, 'Microsoft YaHei', serif" font-size="46" font-weight="700" fill="#1F2A44">可复制的智能体建设原则</text>
+    <text x="640" y="130" text-anchor="middle" font-family="'Microsoft YaHei', Arial, sans-serif" font-size="22" fill="#5B6780">智能体建设的重点，不是追求全自动替代，而是构建一套可控自动化体系。</text>
+  </g>
+
+  <g id="principle-core">
+    <rect x="328" y="196" width="624" height="146" rx="28" fill="#FFFFFF" stroke="#D9E1EC" stroke-width="1.2"/>
+    <text x="640" y="252" text-anchor="middle" font-family="'Microsoft YaHei', Arial, sans-serif" font-size="18" fill="#5B6780">核心结论</text>
+    <text x="640" y="304" text-anchor="middle" font-family="'Microsoft YaHei', Arial, sans-serif" font-size="34" font-weight="700" fill="url(#titleGrad06)">不是一次性做成，而是长期稳定复用</text>
+  </g>
+
+  <g id="principle-bands">
+    <rect x="88" y="402" width="260" height="74" rx="20" fill="#FFFFFF" stroke="#D9E1EC" stroke-width="1"/>
+    <use data-icon="chunk-filled/target" x="112" y="424" width="28" height="28" fill="#0B3A82"/>
+    <text x="154" y="432" font-family="'Microsoft YaHei', Arial, sans-serif" font-size="19" font-weight="700" fill="#1F2A44">先规划、后执行</text>
+    <text x="154" y="456" font-family="'Microsoft YaHei', Arial, sans-serif" font-size="13" fill="#5B6780">先形成方向判断，再进入结果产出。</text>
+
+    <rect x="376" y="402" width="260" height="74" rx="20" fill="#FFFFFF" stroke="#D9E1EC" stroke-width="1"/>
+    <use data-icon="chunk-filled/shield" x="400" y="424" width="28" height="28" fill="#18A0A6"/>
+    <text x="442" y="432" font-family="'Microsoft YaHei', Arial, sans-serif" font-size="19" font-weight="700" fill="#1F2A44">关键节点可审核</text>
+    <text x="442" y="456" font-family="'Microsoft YaHei', Arial, sans-serif" font-size="13" fill="#5B6780">流程中必须保留把关、回退与修正。</text>
+
+    <rect x="664" y="402" width="260" height="74" rx="20" fill="#FFFFFF" stroke="#D9E1EC" stroke-width="1"/>
+    <use data-icon="chunk-filled/chart-bar" x="688" y="424" width="28" height="28" fill="#1F9D55"/>
+    <text x="730" y="432" font-family="'Microsoft YaHei', Arial, sans-serif" font-size="19" font-weight="700" fill="#1F2A44">全过程要留痕</text>
+    <text x="730" y="456" font-family="'Microsoft YaHei', Arial, sans-serif" font-size="13" fill="#5B6780">让每一步都可追踪、可复盘、可恢复。</text>
+
+    <rect x="952" y="402" width="240" height="74" rx="20" fill="#FFFFFF" stroke="#D9E1EC" stroke-width="1"/>
+    <use data-icon="chunk-filled/lightbulb" x="976" y="424" width="28" height="28" fill="#7C8FB3"/>
+    <text x="1018" y="432" font-family="'Microsoft YaHei', Arial, sans-serif" font-size="19" font-weight="700" fill="#1F2A44">沉淀长期能力</text>
+    <text x="1018" y="456" font-family="'Microsoft YaHei', Arial, sans-serif" font-size="13" fill="#5B6780">把一次成功变成组织资产。</text>
+  </g>
+
+  <g id="closing-line">
+    <line x1="254" y1="552" x2="1026" y2="552" stroke="#D9E1EC" stroke-width="1.5"/>
+    <text x="640" y="610" text-anchor="middle" font-family="'Microsoft YaHei', Arial, sans-serif" font-size="28" font-weight="700" fill="#1F2A44">这次软著项目的意义，在于把一次交付沉淀成一种工作方法。</text>
+  </g>
+
+  <g id="footer">
+    <text x="80" y="689" font-family="'Microsoft YaHei', Arial, sans-serif" font-size="12" fill="#8A96AA">方法沉淀：从工具使用走向机制建设</text>
+    <text x="640" y="689" text-anchor="middle" font-family="'Microsoft YaHei', Arial, sans-serif" font-size="12" fill="#8A96AA">CONFIDENTIAL</text>
+    <text x="1200" y="689" text-anchor="end" font-family="'Microsoft YaHei', Arial, sans-serif" font-size="12" fill="#8A96AA">06</text>
+  </g>
+</svg>

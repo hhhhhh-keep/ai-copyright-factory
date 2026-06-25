@@ -6,10 +6,52 @@ from types import SimpleNamespace
 from unittest.mock import patch
 
 from app.planner import PlannerValidationError
-from app.workflow import STEPS, _write_planner_diagnostics, run_generated_project, run_job
+from app.enhancer import EnhancementResult
+from app.workflow import (
+    STEPS,
+    _write_planner_diagnostics,
+    enhance_generated_project,
+    get_job,
+    run_generated_project,
+    run_job,
+)
 
 
 class WorkflowOrderTests(unittest.TestCase):
+    @patch("app.workflow._update")
+    @patch("app.workflow.enhance_project")
+    def test_readme_progress_event_updates_readme_node(self, enhance_project, update):
+        def emit_readme_event(*args, **kwargs):
+            callback = kwargs["progress_callback"]
+            callback({"file": "README.md", "status": "running"})
+            callback({"file": "README.md", "status": "completed", "summary": "done"})
+            return EnhancementResult(
+                requested_mode="auto",
+                actual_mode="llm",
+                summary="done",
+            )
+
+        enhance_project.side_effect = emit_readme_event
+        with TemporaryDirectory() as tmp:
+            job_dir = Path(tmp)
+            (job_dir / "planning.json").write_text("{}", encoding="utf-8")
+            enhance_generated_project(
+                {"job_id": "20260623150000-readme01", "codegen_mode": "auto"},
+                job_dir,
+            )
+
+        step_updates = [
+            call.kwargs["codegen_enhance_steps"]
+            for call in update.call_args_list
+            if "codegen_enhance_steps" in call.kwargs
+        ]
+        self.assertTrue(
+            any(
+                next(item for item in steps if item["key"] == "readme")["status"] == "completed"
+                for steps in step_updates
+            )
+        )
+
     def test_demo_starts_before_screenshot(self):
         keys = [key for key, _ in STEPS]
         self.assertLess(keys.index("run"), keys.index("demo"))
@@ -49,6 +91,21 @@ class WorkflowOrderTests(unittest.TestCase):
             )
             self.assertEqual(payload["first_error"], "first failed")
             self.assertEqual(payload["second_error"], "second failed")
+
+    def test_get_job_reads_status_with_utf8_bom(self):
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            job_id = "20260618100000-bomtest1"
+            job_dir = root / job_id
+            job_dir.mkdir()
+            (job_dir / "status.json").write_text(
+                json.dumps({"job_id": job_id, "status": "awaiting_demo_review"}),
+                encoding="utf-8-sig",
+            )
+            with patch("app.workflow.OUTPUT_ROOT", root):
+                job = get_job(job_id)
+            self.assertEqual(job["job_id"], job_id)
+            self.assertEqual(job["status"], "awaiting_demo_review")
 
     @patch("app.workflow._update")
     @patch("app.workflow._step")

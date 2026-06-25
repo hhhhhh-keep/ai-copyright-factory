@@ -54,7 +54,22 @@ class PlannerSettingsTests(unittest.TestCase):
                 env_path.read_text(encoding="utf-8"),
             )
 
+    def test_document_writer_settings_are_persisted(self):
+        with tempfile.TemporaryDirectory() as directory:
+            env_path = Path(directory) / ".env"
+            with patch.object(settings, "ENV_PATH", env_path):
+                with patch.dict(os.environ, {}, clear=True):
+                    result = settings.save_planner_settings(
+                        PlannerSettingsUpdate(
+                            base_url="https://example.com/v1",
+                            model="planner",
+                            document_model="document-writer",
+                            document_timeout=120,
+                        )
+                    )
+            self.assertEqual(result["document_model"], "document-writer")
+            self.assertEqual(result["document_timeout"], 120)
+
 
 if __name__ == "__main__":
     unittest.main()
-

@@ -1,0 +1,104 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1280 720" width="1280" height="720">
+  <defs>
+    <radialGradient id="bgGlow02" cx="20%" cy="18%" r="62%">
+      <stop offset="0%" stop-color="#0B74FF" stop-opacity="0.34"/>
+      <stop offset="45%" stop-color="#061A36" stop-opacity="0.55"/>
+      <stop offset="100%" stop-color="#02050B"/>
+    </radialGradient>
+    <linearGradient id="neonLine02" x1="0%" y1="0%" x2="100%" y2="0%">
+      <stop offset="0%" stop-color="#11D7FF"/>
+      <stop offset="52%" stop-color="#2B7CFF"/>
+      <stop offset="100%" stop-color="#FF9E3D"/>
+    </linearGradient>
+    <linearGradient id="panel02" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#10263E" stop-opacity="0.92"/>
+      <stop offset="60%" stop-color="#07111F" stop-opacity="0.92"/>
+      <stop offset="100%" stop-color="#D9F5FF" stop-opacity="0.18"/>
+    </linearGradient>
+    <filter id="blueGlow02" x="-30%" y="-30%" width="160%" height="160%">
+      <feGaussianBlur in="SourceAlpha" stdDeviation="6" result="blur"/>
+      <feFlood flood-color="#11D7FF" flood-opacity="0.60" result="glowColor"/>
+      <feComposite in="glowColor" in2="blur" operator="in" result="glow"/>
+      <feMerge>
+        <feMergeNode in="glow"/>
+        <feMergeNode in="SourceGraphic"/>
+      </feMerge>
+    </filter>
+    <filter id="orangeGlow02" x="-30%" y="-30%" width="160%" height="160%">
+      <feGaussianBlur in="SourceAlpha" stdDeviation="5" result="blur"/>
+      <feFlood flood-color="#FF9E3D" flood-opacity="0.50" result="glowColor"/>
+      <feComposite in="glowColor" in2="blur" operator="in" result="glow"/>
+      <feMerge>
+        <feMergeNode in="glow"/>
+        <feMergeNode in="SourceGraphic"/>
+      </feMerge>
+    </filter>
+  </defs>
+
+  <g id="background">
+    <rect width="1280" height="720" fill="#02050B"/>
+    <rect width="1280" height="720" fill="url(#bgGlow02)"/>
+    <path d="M-60,226 C102,94 264,44 448,82 C628,120 738,256 920,246 C1080,238 1186,148 1350,78" fill="none" stroke="#11D7FF" stroke-width="5" stroke-opacity="0.72" filter="url(#blueGlow02)"/>
+    <path d="M-24,282 C178,96 330,80 520,154 C706,226 796,386 982,326 C1110,286 1212,196 1320,174" fill="none" stroke="#FF9E3D" stroke-width="3.2" stroke-opacity="0.68" filter="url(#orangeGlow02)"/>
+    <path d="M-40,334 C160,190 340,156 514,210 C702,268 792,430 1000,374 C1134,338 1226,260 1328,230" fill="none" stroke="#5EE7FF" stroke-width="2" stroke-opacity="0.52"/>
+    <rect x="0" y="0" width="1280" height="720" fill="#02050B" fill-opacity="0.42"/>
+  </g>
+
+  <g id="chrome">
+    <text x="48" y="42" font-family="'Microsoft YaHei', Arial, sans-serif" font-size="14" font-weight="700" fill="#E7F8FF" fill-opacity="0.75">AI COPYRIGHT FACTORY</text>
+    <text x="1168" y="42" text-anchor="end" font-family="'Microsoft YaHei', Arial, sans-serif" font-size="12" fill="#E7F8FF" fill-opacity="0.70">PROBLEM ANALYSIS</text>
+    <rect x="40" y="676" width="1200" height="1" fill="#AEEBFF" fill-opacity="0.20"/>
+    <text x="48" y="704" font-family="'Microsoft YaHei', Arial, sans-serif" font-size="12" fill="#E7F8FF" fill-opacity="0.58">问题定位：链条割裂而非单点低效</text>
+    <text x="640" y="704" text-anchor="middle" font-family="'Microsoft YaHei', Arial, sans-serif" font-size="12" fill="#E7F8FF" fill-opacity="0.58">CONFIDENTIAL</text>
+    <text x="1232" y="704" text-anchor="end" font-family="'Microsoft YaHei', Arial, sans-serif" font-size="12" fill="#E7F8FF" fill-opacity="0.58">02</text>
+  </g>
+
+  <g id="title-block">
+    <text x="70" y="108" font-family="'Microsoft YaHei', Arial, sans-serif" font-size="46" font-weight="800" fill="#FFFFFF">传统模式的效率与管理挑战</text>
+    <line x1="72" y1="134" x2="520" y2="134" stroke="url(#neonLine02)" stroke-width="3" filter="url(#blueGlow02)"/>
+    <text x="72" y="174" font-family="'Microsoft YaHei', Arial, sans-serif" font-size="18" fill="#D8EDFF" fill-opacity="0.86">真正的问题不是单点工作量，而是链路长、协同散、质量控制依赖个人经验。</text>
+  </g>
+
+  <g id="left-summary">
+    <rect x="74" y="250" width="370" height="296" rx="28" fill="url(#panel02)" stroke="#62D7FF" stroke-width="1.4" stroke-opacity="0.72"/>
+    <text x="110" y="314" font-family="'Microsoft YaHei', Arial, sans-serif" font-size="20" font-weight="700" fill="#72E4FF">MANAGEMENT VIEW</text>
+    <text x="110" y="382" font-family="'Microsoft YaHei', Arial, sans-serif" font-size="54" font-weight="800" fill="#FFFFFF">问题不在</text>
+    <text x="110" y="448" font-family="'Microsoft YaHei', Arial, sans-serif" font-size="54" font-weight="800" fill="#FFFFFF">某一个动作</text>
+    <line x1="112" y1="486" x2="360" y2="486" stroke="#AEEBFF" stroke-width="2" stroke-opacity="0.22"/>
+    <text x="110" y="528" font-family="'Microsoft YaHei', Arial, sans-serif" font-size="23" font-weight="700" fill="#D8EDFF">而在于整个链条缺少统一牵引</text>
+  </g>
+
+  <g id="issue-list">
+    <g id="issue-01">
+      <circle cx="534" cy="264" r="31" fill="#09111F" stroke="#62D7FF" stroke-width="2" filter="url(#blueGlow02)"/>
+      <text x="534" y="271" text-anchor="middle" font-family="'Microsoft YaHei', Arial, sans-serif" font-size="17" font-weight="800" fill="#FFFFFF">01</text>
+      <rect x="588" y="222" width="560" height="84" rx="20" fill="url(#panel02)" stroke="#62D7FF" stroke-width="1" stroke-opacity="0.55"/>
+      <text x="620" y="258" font-family="'Microsoft YaHei', Arial, sans-serif" font-size="22" font-weight="800" fill="#FFFFFF">需求理解依赖人工沟通</text>
+      <text x="620" y="284" font-family="'Microsoft YaHei', Arial, sans-serif" font-size="14" fill="#D8EDFF" fill-opacity="0.78">前期需要多轮解释、澄清和确认，需求边界容易在沟通过程中漂移。</text>
+    </g>
+
+    <g id="issue-02">
+      <circle cx="534" cy="372" r="31" fill="#09111F" stroke="#FF9E3D" stroke-width="2" filter="url(#orangeGlow02)"/>
+      <text x="534" y="379" text-anchor="middle" font-family="'Microsoft YaHei', Arial, sans-serif" font-size="17" font-weight="800" fill="#FFFFFF">02</text>
+      <rect x="588" y="330" width="560" height="84" rx="20" fill="url(#panel02)" stroke="#62D7FF" stroke-width="1" stroke-opacity="0.55"/>
+      <text x="620" y="366" font-family="'Microsoft YaHei', Arial, sans-serif" font-size="22" font-weight="800" fill="#FFFFFF">中间环节分散、动作割裂</text>
+      <text x="620" y="392" font-family="'Microsoft YaHei', Arial, sans-serif" font-size="14" fill="#D8EDFF" fill-opacity="0.78">规划、开发、截图、文档、打包彼此独立，链路长且上下游衔接弱。</text>
+    </g>
+
+    <g id="issue-03">
+      <circle cx="534" cy="480" r="31" fill="#09111F" stroke="#62D7FF" stroke-width="2" filter="url(#blueGlow02)"/>
+      <text x="534" y="487" text-anchor="middle" font-family="'Microsoft YaHei', Arial, sans-serif" font-size="17" font-weight="800" fill="#FFFFFF">03</text>
+      <rect x="588" y="438" width="560" height="84" rx="20" fill="url(#panel02)" stroke="#62D7FF" stroke-width="1" stroke-opacity="0.55"/>
+      <text x="620" y="474" font-family="'Microsoft YaHei', Arial, sans-serif" font-size="22" font-weight="800" fill="#FFFFFF">质量控制依赖个人经验</text>
+      <text x="620" y="500" font-family="'Microsoft YaHei', Arial, sans-serif" font-size="14" fill="#D8EDFF" fill-opacity="0.78">过程不透明、难复盘，质量更多由“谁在做”决定，而不是由机制保障。</text>
+    </g>
+
+    <g id="issue-04">
+      <circle cx="534" cy="588" r="31" fill="#09111F" stroke="#FF9E3D" stroke-width="2" filter="url(#orangeGlow02)"/>
+      <text x="534" y="595" text-anchor="middle" font-family="'Microsoft YaHei', Arial, sans-serif" font-size="17" font-weight="800" fill="#FFFFFF">04</text>
+      <rect x="588" y="546" width="560" height="84" rx="20" fill="url(#panel02)" stroke="#62D7FF" stroke-width="1" stroke-opacity="0.55"/>
+      <text x="620" y="582" font-family="'Microsoft YaHei', Arial, sans-serif" font-size="22" font-weight="800" fill="#FFFFFF">缺少规模化复制能力</text>
+      <text x="620" y="608" font-family="'Microsoft YaHei', Arial, sans-serif" font-size="14" fill="#D8EDFF" fill-opacity="0.78">每个项目都像重新组织一次生产，不利于持续扩大产能和方法沉淀。</text>
+    </g>
+  </g>
+</svg>

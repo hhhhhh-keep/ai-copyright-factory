@@ -404,8 +404,11 @@ def _first_json_object(text: str) -> str:
     规则：
     1. 先去掉代码围栏。
     2. 找出所有顶层 `{` 起点，对每个起点匹配对应的 `}`，得到候选子串。
-    3. 逐个 `json.loads` 验证，验证通过的第一个就是返回结果。
-    4. 字符串字面量内的引号和括号不被算作边界。
+    3. 收集所有可被 `json.loads` 解析为对象的候选。
+    4. Planner 响应优先选择包含规划必需顶层字段的候选，避免 `<think>`
+       推理文本里的小示例对象被误当成最终规划。
+    5. 若没有规划形状候选，保持旧行为：返回第一个合法 JSON 对象。
+    6. 字符串字面量内的引号和括号不被算作边界。
     """
     stripped = _strip_code_fence(text)
     if stripped.startswith("{") and stripped.endswith("}"):
@@ -437,6 +440,8 @@ def _first_json_object(text: str) -> str:
             # 顶级 `}` 不是起点；忽略即可
             continue
 
+    parsed_candidates: List[Tuple[str, Dict[str, Any]]] = []
+
     # 对每个起点，从起点开始寻找与之配对的 `}` 并尝试解析
     for start in candidates:
         in_string = False
@@ -461,12 +466,35 @@ def _first_json_object(text: str) -> str:
                 if depth == 0:
                     candidate = stripped[start : index + 1]
                     try:
-                        json.loads(candidate)
-                        return candidate
+                        parsed = json.loads(candidate)
                     except json.JSONDecodeError:
                         # 该起点不是合法 JSON，跳到下一个起点
                         break
+                    if isinstance(parsed, dict):
+                        parsed_candidates.append((candidate, parsed))
+                    break
         # 配对失败或解析失败，继续下一个起点
+
+    if parsed_candidates:
+        planning_required_keys = {
+            "software_name",
+            "description",
+            "software_type",
+            "modules",
+            "database_tables",
+            "api_list",
+            "screenshots",
+            "document_outline",
+        }
+
+        def _planning_score(item: Tuple[str, Dict[str, Any]]) -> int:
+            _candidate, value = item
+            return sum(1 for key in planning_required_keys if key in value)
+
+        best = max(parsed_candidates, key=_planning_score)
+        if _planning_score(best) >= 4:
+            return best[0]
+        return parsed_candidates[0][0]
 
     raise ValueError("模型响应中没有合法 JSON 对象")
 
@@ -489,7 +517,7 @@ def _planner_endpoint() -> Tuple[str, str, str, int]:
     base_url = os.getenv("AI_PLANNER_BASE_URL", "https://api.openai.com/v1").rstrip("/")
     api_key = os.getenv("AI_PLANNER_API_KEY", "").strip()
     model = os.getenv("AI_PLANNER_MODEL", "").strip()
-    timeout = int(os.getenv("AI_PLANNER_TIMEOUT", "60"))
+    timeout = int(os.getenv("AI_PLANNER_TIMEOUT", "180"))
     if not api_key:
         raise RuntimeError("未配置 AI_PLANNER_API_KEY")
     if not model:
@@ -514,18 +542,38 @@ def _post_chat_completion(messages: List[Dict[str, str]], temperature: float) ->
         },
         method="POST",
     )
+    def _do_request() -> str:
+        try:
+            with urllib.request.urlopen(request, timeout=timeout) as response:
+                response_data = json.loads(response.read().decode("utf-8"))
+        except urllib.error.HTTPError as exc:
+            detail = exc.read().decode("utf-8", errors="replace")[:500]
+            raise RuntimeError(f"Planner API 返回 HTTP {exc.code}: {detail}") from exc
+        except urllib.error.URLError as exc:
+            raise RuntimeError(f"Planner API 连接失败: {exc.reason}") from exc
+        try:
+            return response_data["choices"][0]["message"]["content"]
+        except (KeyError, IndexError, TypeError) as exc:
+            raise RuntimeError("Planner API 响应缺少 choices[0].message.content") from exc
+
+    # ISSUE-026：与 ``enhancer._call_chat_completion_with_deadline`` 同模式，
+    # 用 ThreadPoolExecutor + ``future.result(timeout=timeout+10)`` 强制把
+    # ``urllib.request.urlopen`` 的 SSL read 阶段收回 wall-clock 窗口。
+    # 之前 ``urlopen(timeout=)`` 只覆盖 TCP connect，MiniMax 在 SSL read 挂死时
+    # 即使 ``AI_PLANNER_TIMEOUT=180`` 也会无限等下去。
+    import concurrent.futures
+    pool = concurrent.futures.ThreadPoolExecutor(max_workers=1)
     try:
-        with urllib.request.urlopen(request, timeout=timeout) as response:
-            response_data = json.loads(response.read().decode("utf-8"))
-    except urllib.error.HTTPError as exc:
-        detail = exc.read().decode("utf-8", errors="replace")[:500]
-        raise RuntimeError(f"Planner API 返回 HTTP {exc.code}: {detail}") from exc
-    except urllib.error.URLError as exc:
-        raise RuntimeError(f"Planner API 连接失败: {exc.reason}") from exc
-    try:
-        return response_data["choices"][0]["message"]["content"]
-    except (KeyError, IndexError, TypeError) as exc:
-        raise RuntimeError("Planner API 响应缺少 choices[0].message.content") from exc
+        future = pool.submit(_do_request)
+        try:
+            return future.result(timeout=timeout + 10)
+        except concurrent.futures.TimeoutError as exc:
+            future.cancel()
+            raise RuntimeError(
+                f"Planner LLM read timed out (wall-clock {timeout + 10}s)"
+            ) from exc
+    finally:
+        pool.shutdown(wait=False)
 
 
 def _parse_and_validate(text: str) -> Planning:

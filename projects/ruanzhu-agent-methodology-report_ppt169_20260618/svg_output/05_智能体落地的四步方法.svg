@@ -1,0 +1,73 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1280 720" width="1280" height="720">
+  <defs>
+    <linearGradient id="topGrad05" x1="0%" y1="0%" x2="100%" y2="0%">
+      <stop offset="0%" stop-color="#0B3A82"/>
+      <stop offset="100%" stop-color="#18A0A6"/>
+    </linearGradient>
+  </defs>
+
+  <g id="background">
+    <rect width="1280" height="720" fill="#F7F9FC"/>
+    <rect x="0" y="0" width="1280" height="6" fill="url(#topGrad05)"/>
+  </g>
+
+  <g id="header">
+    <text x="48" y="50" font-family="Georgia, 'Microsoft YaHei', serif" font-size="34" font-weight="700" fill="#1F2A44">智能体落地的四步方法</text>
+    <rect x="40" y="72" width="1200" height="46" rx="10" fill="#1F2A44"/>
+    <text x="64" y="101" font-family="'Microsoft YaHei', Arial, sans-serif" font-size="19" font-weight="700" fill="#FFFFFF">智能体真正可落地，不是让 AI 直接做完，而是让 AI 按照方法参与组织工作。</text>
+  </g>
+
+  <g id="chartArea">
+    <line x1="164" y1="252" x2="1116" y2="252" stroke="#CBD7E6" stroke-width="3"/>
+
+    <g id="step-01">
+      <circle cx="164" cy="252" r="34" fill="#0B3A82"/>
+      <text x="164" y="258" text-anchor="middle" font-family="'Microsoft YaHei', Arial, sans-serif" font-size="20" font-weight="700" fill="#FFFFFF">1</text>
+      <rect x="70" y="310" width="188" height="256" rx="18" fill="#FFFFFF" stroke="#D9E1EC" stroke-width="1.2"/>
+      <use data-icon="chunk-filled/target" x="142" y="332" width="44" height="44" fill="#0B3A82"/>
+      <text x="164" y="400" text-anchor="middle" font-family="'Microsoft YaHei', Arial, sans-serif" font-size="22" font-weight="700" fill="#1F2A44">结构化输入</text>
+      <text x="96" y="444" font-family="'Microsoft YaHei', Arial, sans-serif" font-size="14" fill="#5B6780">先把需求边界、目标和范围说清楚，降低 AI 对任务理解的偏差。</text>
+      <rect x="96" y="504" width="136" height="28" rx="14" fill="#EEF4FF"/>
+      <text x="164" y="523" text-anchor="middle" font-family="'Microsoft YaHei', Arial, sans-serif" font-size="13" font-weight="700" fill="#0B3A82">先清边界</text>
+    </g>
+
+    <g id="step-02">
+      <circle cx="480" cy="252" r="34" fill="#1F5FBF"/>
+      <text x="480" y="258" text-anchor="middle" font-family="'Microsoft YaHei', Arial, sans-serif" font-size="20" font-weight="700" fill="#FFFFFF">2</text>
+      <rect x="386" y="310" width="188" height="256" rx="18" fill="#FFFFFF" stroke="#D9E1EC" stroke-width="1.2"/>
+      <use data-icon="chunk-filled/lightbulb" x="458" y="332" width="44" height="44" fill="#1F5FBF"/>
+      <text x="480" y="400" text-anchor="middle" font-family="'Microsoft YaHei', Arial, sans-serif" font-size="22" font-weight="700" fill="#1F2A44">规划先行</text>
+      <text x="412" y="444" font-family="'Microsoft YaHei', Arial, sans-serif" font-size="14" fill="#5B6780">先生成规划并审核，再进入执行，避免直接生成带来的方向失控。</text>
+      <rect x="412" y="504" width="136" height="28" rx="14" fill="#EEF4FF"/>
+      <text x="480" y="523" text-anchor="middle" font-family="'Microsoft YaHei', Arial, sans-serif" font-size="13" font-weight="700" fill="#1F5FBF">先做判断</text>
+    </g>
+
+    <g id="step-03">
+      <circle cx="796" cy="252" r="34" fill="#18A0A6"/>
+      <text x="796" y="258" text-anchor="middle" font-family="'Microsoft YaHei', Arial, sans-serif" font-size="20" font-weight="700" fill="#FFFFFF">3</text>
+      <rect x="702" y="310" width="188" height="256" rx="18" fill="#FFFFFF" stroke="#D9E1EC" stroke-width="1.2"/>
+      <use data-icon="chunk-filled/chart-bar" x="774" y="332" width="44" height="44" fill="#18A0A6"/>
+      <text x="796" y="400" text-anchor="middle" font-family="'Microsoft YaHei', Arial, sans-serif" font-size="22" font-weight="700" fill="#1F2A44">分阶段推进</text>
+      <text x="728" y="444" font-family="'Microsoft YaHei', Arial, sans-serif" font-size="14" fill="#5B6780">规划、生成、验证、审查、交付逐段推进，每一步都建立清晰目标。</text>
+      <rect x="728" y="504" width="136" height="28" rx="14" fill="#EAFBFB"/>
+      <text x="796" y="523" text-anchor="middle" font-family="'Microsoft YaHei', Arial, sans-serif" font-size="13" font-weight="700" fill="#18A0A6">分段控制</text>
+    </g>
+
+    <g id="step-04">
+      <circle cx="1112" cy="252" r="34" fill="#1F9D55"/>
+      <text x="1112" y="258" text-anchor="middle" font-family="'Microsoft YaHei', Arial, sans-serif" font-size="20" font-weight="700" fill="#FFFFFF">4</text>
+      <rect x="1018" y="310" width="188" height="256" rx="18" fill="#FFFFFF" stroke="#D9E1EC" stroke-width="1.2"/>
+      <use data-icon="chunk-filled/users" x="1090" y="332" width="44" height="44" fill="#1F9D55"/>
+      <text x="1112" y="400" text-anchor="middle" font-family="'Microsoft YaHei', Arial, sans-serif" font-size="22" font-weight="700" fill="#1F2A44">人机协同闭环</text>
+      <text x="1044" y="444" font-family="'Microsoft YaHei', Arial, sans-serif" font-size="14" fill="#5B6780">AI 负责提效，人工负责决策与最终确认，系统负责记录全过程。</text>
+      <rect x="1044" y="504" width="136" height="28" rx="14" fill="#EEFBEF"/>
+      <text x="1112" y="523" text-anchor="middle" font-family="'Microsoft YaHei', Arial, sans-serif" font-size="13" font-weight="700" fill="#1F9D55">形成闭环</text>
+    </g>
+  </g>
+
+  <g id="footer">
+    <text x="48" y="689" font-family="'Microsoft YaHei', Arial, sans-serif" font-size="12" fill="#8A96AA">方法本质：让AI在流程中发挥作用，而不是跳过流程</text>
+    <text x="640" y="689" text-anchor="middle" font-family="'Microsoft YaHei', Arial, sans-serif" font-size="12" fill="#8A96AA">CONFIDENTIAL</text>
+    <text x="1232" y="689" text-anchor="end" font-family="'Microsoft YaHei', Arial, sans-serif" font-size="12" fill="#8A96AA">05</text>
+  </g>
+</svg>

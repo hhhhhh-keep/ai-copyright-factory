@@ -39,7 +39,7 @@ const plannerSettings = ref({
   model: '',
   timeout: 60,
   codegen_model: '',
-  codegen_timeout: 90,
+  codegen_timeout: 180,
   clear_api_key: false,
   api_key_configured: false,
   api_key_hint: ''
@@ -47,6 +47,46 @@ const plannerSettings = ref({
 let timer = null
 
 const finished = computed(() => job.value?.status === 'success')
+
+const codegenStatus = computed(() => {
+  const current = job.value
+  if (!current?.codegen_mode) return null
+  if (current.codegen_mode === 'template') {
+    return {
+      tone: 'muted',
+      title: '代码增强：未启用',
+      detail: '当前任务使用固定生成器模板，未调用 AI Code Enhancer。'
+    }
+  }
+  if (current.codegen_actual_mode === 'llm' && current.codegen_fallback_reason) {
+    return {
+      tone: 'warning',
+      title: `代码增强：部分增强完成${current.codegen_model ? ` · ${current.codegen_model}` : ''}`,
+      detail: current.codegen_summary
+        ? `${current.codegen_summary}；部分文件已回退：${current.codegen_fallback_reason}`
+        : `部分文件已回退：${current.codegen_fallback_reason}`
+    }
+  }
+  if (current.codegen_actual_mode === 'llm') {
+    return {
+      tone: 'success',
+      title: `代码增强：AI 增强成功${current.codegen_model ? ` · ${current.codegen_model}` : ''}`,
+      detail: current.codegen_summary || '已按规划完成前端壳层、样式和说明文档增强。'
+    }
+  }
+  if (current.codegen_fallback_reason) {
+    return {
+      tone: 'warning',
+      title: '代码增强：失败，已回退稳定模板',
+      detail: current.codegen_fallback_reason
+    }
+  }
+  return {
+    tone: 'info',
+    title: `代码增强：${current.codegen_mode}`,
+    detail: current.codegen_summary || '等待代码增强阶段执行。'
+  }
+})
 
 const STAGE_LABELS = {
   queued: '排队中…',
@@ -58,6 +98,25 @@ const STAGE_LABELS = {
 }
 function stageLabel(stage) {
   return STAGE_LABELS[stage] || (stage ? `阶段：${stage}` : '')
+}
+
+const STEP_STATUS_LABELS = {
+  pending: '等待',
+  running: '执行中',
+  retrying: '重试中',
+  completed: '已完成',
+  failed: '失败',
+  skipped: '已跳过',
+}
+function statusLabel(status) {
+  return STEP_STATUS_LABELS[status] || (status || '未知')
+}
+function formatDuration(ms) {
+  if (!ms || ms < 1000) return `${ms || 0}ms`
+  if (ms < 60000) return `${(ms / 1000).toFixed(1)}s`
+  const m = Math.floor(ms / 60000)
+  const s = Math.floor((ms % 60000) / 1000)
+  return `${m}m${s}s`
 }
 
 async function createJob() {
@@ -493,10 +552,22 @@ onBeforeUnmount(() => clearInterval(timer))
           <div class="planner-info" v-if="job?.planner_model">
             Planner：LLM · {{ job.planner_model }}
           </div>
-          <div class="planner-info" v-if="job?.codegen_mode">
-            Code Enhancer：{{job.codegen_actual_mode || job.codegen_mode}}
-            <span v-if="job.codegen_model"> · {{job.codegen_model}}</span>
-            <span v-if="job.codegen_fallback_reason">（已回滚模板）</span>
+          <div class="planner-info codegen-info" v-if="codegenStatus" :class="codegenStatus.tone">
+            <b>{{ codegenStatus.title }}</b>
+            <span>{{ codegenStatus.detail }}</span>
+            <div class="codegen-steps" v-if="job?.codegen_enhance_steps?.length">
+              <em
+                v-for="item in job.codegen_enhance_steps"
+                :key="item.key || item.file"
+                :class="['enhance-step', item.status]"
+                :title="(item.summary || '') + (item.failure_reason ? ' · ' + item.failure_reason : '')"
+              >
+                <span class="step-name">{{ item.name || item.key || item.file }}</span>
+                <span class="step-status">{{ statusLabel(item.status) }}</span>
+                <span v-if="item.attempts && item.attempts > 1" class="step-attempts">×{{ item.attempts }}</span>
+                <span v-if="item.duration_ms" class="step-duration">{{ formatDuration(item.duration_ms) }}</span>
+              </em>
+            </div>
           </div>
           <div class="compliance-summary" v-if="job?.compliance_score !== null && job?.compliance_score !== undefined">
             <b>{{job.compliance_score}} 分</b>
