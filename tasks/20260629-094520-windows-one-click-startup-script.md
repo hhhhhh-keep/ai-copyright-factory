@@ -1,4 +1,4 @@
-﻿# Task: Windows one-click startup script
+# Task: Windows one-click startup script
 
 ## Goal
 
@@ -20,8 +20,7 @@ Add a Windows one-click startup script for local deployment/dev use, and align R
 ## Verification
 
 ```text
-powershell -NoProfile -ExecutionPolicy Bypass -Command "$null = [scriptblock]::Create((Get-Content -Raw scripts/start-dev.ps1)); 'syntax ok'"
+$null = [scriptblock]::Create((Get-Content -Raw -LiteralPath 'scripts\start-dev.ps1')); Write-Output 'syntax ok'
 python -m unittest tests.test_settings -v
 git diff --check
 ```
-

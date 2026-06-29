@@ -25,9 +25,9 @@ class PlannerSettingsUpdate(BaseModel):
     base_url: HttpUrl
     api_key: Optional[str] = Field(default=None, max_length=500)
     model: str = Field(default="", max_length=100)
-    timeout: int = Field(default=60, ge=5, le=300)
+    timeout: int = Field(default=180, ge=5, le=300)
     codegen_model: str = Field(default="", max_length=100)
-    codegen_timeout: int = Field(default=180, ge=10, le=600)
+    codegen_timeout: int = Field(default=240, ge=10, le=600)
     document_model: str = Field(default="", max_length=100)
     document_timeout: int = Field(default=90, ge=10, le=300)
     clear_api_key: bool = False
@@ -51,9 +51,9 @@ def public_planner_settings() -> Dict[str, object]:
     return {
         "base_url": values["AI_PLANNER_BASE_URL"] or "https://api.openai.com/v1",
         "model": values["AI_PLANNER_MODEL"],
-        "timeout": int(values["AI_PLANNER_TIMEOUT"] or "60"),
+        "timeout": int(values["AI_PLANNER_TIMEOUT"] or "180"),
         "codegen_model": values["AI_CODEGEN_MODEL"],
-        "codegen_timeout": int(values["AI_CODEGEN_TIMEOUT"] or "180"),
+        "codegen_timeout": int(values["AI_CODEGEN_TIMEOUT"] or "240"),
         "document_model": values["AI_DOCUMENT_MODEL"],
         "document_timeout": int(values["AI_DOCUMENT_TIMEOUT"] or "90"),
         "api_key_configured": bool(api_key),

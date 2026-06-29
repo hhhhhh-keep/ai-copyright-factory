@@ -1604,3 +1604,52 @@ git diff --check
 
 - `shell` UI 子步骤在最终成功任务中因 LLM 空 CSS 被标记为 `skipped`。该状态不会阻断任务，也不会回滚整体 AI 增强；后续如果要追求五步全部 completed，需要继续优化 shell 步 prompt。
 - 当前 fallback 仅处理远端超时、硬超时和坏 JSON 等可恢复错误；选择器越权和非 CSS 注入仍会失败，这是保留的安全边界。
+
+### ISSUE-029：README.md 文档增强坏 JSON 后显示“部分文件已回退”
+
+- 状态：`已登记，待确认统一修复`
+- 优先级：`P1`
+- 首次记录：2026-06-25
+- 复现任务：`20260625134338-885f550c`
+
+#### 现象与影响
+
+任务 `20260625134338-885f550c` 在 AI 代码增强阶段展示：
+
+```text
+部分文件已回退：README.md：ValueError: 代码增强 JSON 解析失败: Expecting ',' delimiter
+```
+
+实际任务没有整体失败：
+
+- `status=awaiting_demo_review`，已进入在线 Demo 审查。
+- `codegen_actual_mode=llm`。
+- UI 五个子步骤均未失败：`theme/shell/business/dashboard/responsive` 均为 `completed`。
+- `run_validation` 全 passed：`frontend_build/backend_structure/maven_test` 均通过。
+- `demo_url=http://127.0.0.1:49821`，`swagger_url=http://127.0.0.1:49820/swagger-ui/index.html`。
+
+影响范围仅为 `generated_project/README.md` 文档增强失败并回退到模板 README。生成项目源码、UI 样式、运行验证和 Demo 不受影响。
+
+#### 根因
+
+README 文档增强仍走旧的 `_request_enhancement()` 整文件增强协议：
+
+- 使用 `_extract_json()` 解析模型返回的 JSON。
+- 解析失败后只追加一次修复请求。
+- 第二次仍返回坏 JSON 时，`_enhance_readme()` 捕获异常并执行 `_restore_one_file(..., "README.md")`。
+
+这条链路没有复用 ISSUE-028 为 UI 子步骤补上的“远端超时/坏 JSON fallback”机制，因此当 MiniMax 返回缺逗号、未转义换行、截断 JSON 等内容时，README 会被标记为 failed，并在前端显示“部分文件已回退”。
+
+#### 建议修复方案
+
+- **P1-1 README 增强改为非阻断状态**：README 坏 JSON 不应展示为严重“回退”错误。建议将该步骤状态从 `failed` 改为 `skipped` 或 `fallback`，摘要写“README AI 文档增强失败，保留模板 README，不影响项目生成与 Demo”。
+- **P1-2 增加本地 README fallback**：当 README AI 响应连续解析失败时，基于 `planning.json` 和当前 README 生成确定性的本地 README 增强内容，至少补充系统定位、模块清单、接口说明和启动说明；该 fallback 不调用远端模型。
+- **P1-3 README JSON 解析复用更稳的提取器**：README 增强返回结构可复用 `_call_chat_json()` 的修复策略，或新增专用 `_request_readme_enhancement()`，避免旧 `_request_enhancement()` 与 UI 子步骤的容错策略分裂。
+- **P1-4 前端展示降级**：当只有 README 失败而 `style.css` 已增强且运行验证通过时，进度区应显示“项目说明未增强，已保留模板”，不要让用户误判 AI 代码增强整体失败。
+
+#### 验收标准
+
+- 复用 job `20260625134338-885f550c` 的 planning 或新建同类任务，README AI 返回坏 JSON 时任务仍显示 `codegen_actual_mode=llm`，且不再显示“部分文件已回退”这种严重错误。
+- `codegen_enhance_steps.readme.status` 为 `skipped` / `fallback` / `completed` 之一，不应为阻断式 `failed`。
+- 若走本地 README fallback，`generated_project/README.md` 应包含软件名称、模块清单、数据库说明、后端启动、前端启动和 Demo profile 说明。
+- 既有 UI 增强测试不退；新增 README 坏 JSON 回归测试。

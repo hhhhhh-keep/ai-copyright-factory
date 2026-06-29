@@ -1,5 +1,7 @@
 # AI软著工厂 V1.0
 
+首次安装部署请先看 [INSTALL.md](INSTALL.md)。
+
 > 2026-06-25 端到端验证说明：最小化 AI 代码增强任务 `20260625123758-c69d4bcd` 已完整跑通，`codegen_actual_mode=llm`，运行验证 `frontend_build/backend_structure/maven_test` 均 passed，截图 12 张，5 份软著文档和 `copyright_package.zip` 已生成。过程中修复了规划 JSON 误提取、业务模块 `dashboard` 与首页路由命名冲突、daemon 子进程 JSON/Unicode 输出、Code Enhancer 重试倍增、UI 步骤超时 fallback、Windows 状态文件瞬时读取冲突和 npm install 超时问题。当前本地 MiniMax 配置建议保持 `AI_PLANNER_TIMEOUT=180`、`AI_CODEGEN_TIMEOUT=240`，生成项目 npm 安装超时默认 600 秒。
 
 > 2026-06-24 实现状态说明（优先于下文历史描述）：在 2026-06-23 五阶段 UI 增强基础上，**ISSUE-026 落地**：
@@ -155,13 +157,14 @@ Copy-Item "C:\Users\whn\Documents\软著\backend\.env.example" `
 AI_PLANNER_BASE_URL=https://api.openai.com/v1
 AI_PLANNER_API_KEY=你的密钥
 AI_PLANNER_MODEL=实际可用的模型名称
-AI_PLANNER_TIMEOUT=60
+AI_PLANNER_TIMEOUT=180
 
 AI_CODEGEN_MODEL=
-AI_CODEGEN_TIMEOUT=180
+AI_CODEGEN_TIMEOUT=240
 AI_CODEGEN_DOC_TIMEOUT=90
 AI_DOCUMENT_MODEL=
 AI_DOCUMENT_TIMEOUT=90
+NPM_INSTALL_TIMEOUT=600
 ```
 
 Planner 运行方式：
@@ -184,13 +187,39 @@ Planner 运行方式：
 
 ## 启动项目
 
-### 1. 启动后端
+### 一键启动（Windows）
+
+先确认已安装 Python 3.10+、Node.js 18+、JDK 17 和 Maven 3.9+，然后运行：
+
+```powershell
+cd "C:\Users\whn\Documents\软著"
+powershell -ExecutionPolicy Bypass -File .\scripts\start-dev.ps1
+```
+
+脚本会：
+
+- 检查 `python`、`node`、`npm.cmd`、`java`、`mvn.cmd` 是否可用。
+- 首次运行时把 `backend\.env.example` 复制为 `backend\.env`。
+- 安装 Python 依赖、Playwright Chromium 和前端依赖。
+- 分别启动后端 `http://127.0.0.1:8000` 与前端 `http://127.0.0.1:5173`。
+
+如果依赖已经安装过，可以快速启动：
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\scripts\start-dev.ps1 -SkipInstall
+```
+
+首次创建 `backend\.env` 后，需要填写 `AI_PLANNER_API_KEY` 和模型名称，再创建生成任务。
+
+### 手动启动
+
+#### 1. 启动后端
 
 ```powershell
 cd "C:\Users\whn\Documents\软著\backend"
 python -m pip install -r requirements.txt
 python -m playwright install chromium
-python -m uvicorn app.main:app --reload --host 127.0.0.1 --port 8000
+python -m uvicorn app.main:app --host 127.0.0.1 --port 8000
 ```
 
 后端地址：
@@ -199,7 +228,7 @@ python -m uvicorn app.main:app --reload --host 127.0.0.1 --port 8000
 - Swagger：`http://127.0.0.1:8000/docs`
 - 健康检查：`http://127.0.0.1:8000/api/health`
 
-### 2. 启动前端
+#### 2. 启动前端
 
 新开一个 PowerShell 窗口：
 
